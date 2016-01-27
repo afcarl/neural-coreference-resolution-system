@@ -4,8 +4,18 @@ __author__ = 'hiroki'
 import re
 
 from io import UNK
+from utils import shuffle
+from nn_utils import sample_weights, get_zeros
+
+import numpy as np
 
 RE_PH = re.compile(ur'[A-Z]+')
+
+
+def get_init_emb(vocab_word, emb_dim):
+    emb = sample_weights(size_x=vocab_word.size(), size_y=emb_dim)
+    emb[0] = get_zeros((1, emb_dim))
+    return np.asarray(emb)
 
 
 def extract_gold_mentions(corpus):
@@ -238,7 +248,7 @@ def convert_words_into_ids(corpus, vocab_word):
     return id_corpus
 
 
-def extract_features(id_corpus, gold_mentions, cand_mentions):
+def extract_features(id_corpus, gold_mentions, cand_mentions, emb):
     """
     :param id_corpus: 1D: n_doc, 2D; n_sents, 3D: n_words; elem=word_id
     :param gold_mentions: 1D: n_doc, 2D: n_sents, 3D: n_cand_mentions; elem=(sent_index, i,j, coref_id)
@@ -246,10 +256,13 @@ def extract_features(id_corpus, gold_mentions, cand_mentions):
     :return: features: 1D: n_doc, 2D: n_sents, 3D: n_words * 2
     """
 
-    def extract_head_word_id(sent_index, head_index):
+    def get_head_word_id(sent_index, head_index):
         return doc[sent_index][head_index]
 
-    def extract_antecedent(coref_id, antecedents):
+    def get_antecedent(coref_id, antecedents):
+        """
+        :return: the closest antecedent
+        """
         antecedents.reverse()
         for a in antecedents:
             if coref_id == a[-1]:
@@ -271,8 +284,6 @@ def extract_features(id_corpus, gold_mentions, cand_mentions):
     n_features = []
 
     for i in xrange(len(id_corpus)):
-        p_feature = []
-        n_feature = []
         doc = id_corpus[i]
         g_mentions = []
 
@@ -283,18 +294,31 @@ def extract_features(id_corpus, gold_mentions, cand_mentions):
         c_mentions = cand_mentions[i]
 
         for j, m in enumerate(g_mentions):
-            m_head_phi = extract_head_word_id(sent_index=m[0], head_index=m[2])
-            ants = extract_antecedent(coref_id=m[-1], antecedents=g_mentions[:j])
+            m_head_id = get_head_word_id(sent_index=m[0], head_index=m[2])
+            m_phi = emb[m_head_id]
 
-            for a in ants:
-                p_feature.append([m_head_phi, extract_head_word_id(sent_index=a[0], head_index=a[2])])
-                neg_cand_a = get_negative_sample(ment=m, ant=a)
+            gold_ants = get_antecedent(coref_id=m[-1], antecedents=g_mentions[:j])
 
-                for c in neg_cand_a:
-                    n_feature.append([m_head_phi, extract_head_word_id(sent_index=c[0], head_index=c[2])])
+            for gold_a in gold_ants:
+                a_head_id = get_head_word_id(sent_index=gold_a[0], head_index=gold_a[2])
+                a_phi = emb[a_head_id]
+                p_features.append(np.concatenate((m_phi, a_phi)))
 
-        p_features.append(p_feature)
-        n_features.append(n_feature)
+                neg_cand_a = get_negative_sample(ment=m, ant=gold_a)
+
+                for neg_a in neg_cand_a:
+                    n_head_id = get_head_word_id(sent_index=neg_a[0], head_index=neg_a[2])
+                    n_phi = emb[n_head_id]
+
+                    n_features.append(np.concatenate((m_phi, n_phi)))
 
     return p_features, n_features
 
+
+def convert_into_theano_input_format(p_phi, n_phi):
+    sample_x = np.concatenate((p_phi, n_phi), axis=0)
+    sample_y = np.concatenate((np.ones((len(p_phi))), np.zeros((len(n_phi)))), axis=0)
+
+    assert len(sample_x) == len(sample_y)
+
+    return shuffle(sample_x, sample_y)

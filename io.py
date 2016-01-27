@@ -49,13 +49,15 @@ class Vocab(object):
         return vocab
 
 
-def load_conll(path, vocab_word, vocab_size=None, file_encoding='utf-8'):
+def load_conll(path, vocab, vocab_size=None, file_encoding='utf-8'):
     corpus = []
     word_freqs = defaultdict(int)
 
     """ Checking whether word IDs should be registered or not """
     register = False
-    if vocab_word.size() == 0:
+    if vocab.size() == 0:
+        vocab.add_word(PAD)
+        vocab.add_word(UNK)
         register = True
 
     with open(path) as f:
@@ -88,12 +90,12 @@ def load_conll(path, vocab_word, vocab_size=None, file_encoding='utf-8'):
     """ Registering word IDs """
     if register:
         for w, f in sorted(word_freqs.items(), key=lambda (k, v): -v):
-            if vocab_size is None or vocab_word.size() < vocab_size:
-                vocab_word.add_word(w)
+            if vocab_size is None or vocab.size() < vocab_size:
+                vocab.add_word(w)
             else:
                 break
 
-    return corpus, vocab_word
+    return corpus, vocab
 
 
 def load_init_emb(init_emb):
