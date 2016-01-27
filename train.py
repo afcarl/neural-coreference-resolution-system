@@ -83,21 +83,21 @@ def main(argv):
     """ Allocate symbolic variables """
     x = T.fmatrix('x')
     y = T.fvector('y')
-    index = T.iscalar()
 
     """ Set params for the model """
     dim_x = len(sample_x[0])
     dim_h = argv.hidden
+    L2_reg = argv.reg
     batch = argv.batch
     n_batch_samples = len(sample_x) / batch + 1
 
     """ Build the model """
-    classifier = Model(x=x, y=y, dim_x=dim_x, dim_h=dim_h, n_label=1)
+    classifier = Model(x=x, y=y, dim_x=dim_x, dim_h=dim_h, n_label=1, L2_reg=L2_reg)
 
     train_model = theano.function(
-        inputs=[index],
+        inputs=[x, y],
         outputs=classifier.nll,
-        updates=classifier.update,
+        updates=classifier.updates
     )
 
     ###############
@@ -115,7 +115,7 @@ def main(argv):
         losses = []
 
         for b_index in xrange(n_batch_samples):
-            if b_index % 100 == 0:
+            if b_index % 100 == 0 and b_index != 0:
                 print '%d' % b_index,
                 sys.stdout.flush()
 
