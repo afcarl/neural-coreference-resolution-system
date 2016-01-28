@@ -28,13 +28,13 @@ class Model(object):
         """ Network """
         h1 = relu(T.dot(x, W_in))  # h1: 1D: batch, 2D: dim_h
         h2 = relu(T.dot(h1, W_h))  # h2: 1D: batch, 2D: dim_h
-        p_y = sigmoid(T.dot(h2, W_out)).flatten()  # p_y: 1D: batch
+        self.p_y = sigmoid(T.dot(h2, W_out)).flatten()  # p_y: 1D: batch
 
         """ Predicts """
-#        self.y_pred = T.argmax(self.log_p_y, axis=1)
+        self.y_pred = T.argmax(self.p_y, axis=0)
 
         """ Cost Function """
-        self.nll = - T.mean(y * T.log(p_y) + (1. - y) * T.log((1. - p_y)))
+        self.nll = - T.mean(y * T.log(self.p_y) + (1. - y) * T.log((1. - self.p_y)))
         cost = self.nll + L2_reg * L2_sqr(params=params) / 2
 
         """ Update """
