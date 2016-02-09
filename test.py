@@ -1,8 +1,10 @@
 import sys
 import time
 
+import numpy as np
 
-def predict(model, samples, indices, gold_mentions, gold_corefs):
+
+def predict(model, sample_x, sample_y):
     """
     :param: samples: 1D: n_doc, 2D: n_sents * n_cand_mentions, 2D: word_dim * 2
     :param: indices: 1D: n_doc, 2D: n_sents * n_cand_mentions; elem=((sent_index, (i, j)),(sent_index, (i, j)))
@@ -10,45 +12,52 @@ def predict(model, samples, indices, gold_mentions, gold_corefs):
     :param: gold_corefs: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=coref_id
     """
 
+    print '\nTEST'
     print '\tIndex: ',
     start = time.time()
-    correct = 0
+
+    correct = 0.
+    correct_t = 0.
+    correct_f = 0.
     total = 0.
+    total_t = 0.
+    k = 0
 
-    for d_index in xrange(len(samples)):
-        if d_index % 100 == 0 and d_index != 0:
-            print '%d' % d_index,
-            sys.stdout.flush()
+    for doc_index in xrange(len(sample_x)):
+        d_sample_x = sample_x[doc_index]
+        d_sample_y = sample_y[doc_index]
 
-        for index in xrange(len(samples[d_index])):
+        for m_index in xrange(len(d_sample_x)):
+            if k % 1000 == 0 and k != 0:
+                print '%d' % k,
+                sys.stdout.flush()
 
-            sample = samples[d_index][index]
+            _sample_x = d_sample_x[m_index]
+            _sample_y = d_sample_y[m_index]
 
-            if len(sample) == 0:
-                continue
+            c = model(_sample_x, _sample_y)
 
-            max_pair_index, max_pair_prob = model(sample)
-            m1, m2 = indices[d_index][index][max_pair_index]
+            correct += np.sum(c)
+            total += len(_sample_y)
+            total_t += np.sum(_sample_y)
 
-            g1 = None
-            g2 = None
-            for g_ment, g_coref in zip(gold_mentions[d_index][m1[0]], gold_corefs[d_index][m1[0]]):
-                if m1[1] == g_ment:
-                    g1 = g_coref
-            for g_ment, g_coref in zip(gold_mentions[d_index][m2[0]], gold_corefs[d_index][m2[0]]):
-                if m2[1] == g_ment:
-                    g2 = g_coref
+            for u in zip(c, _sample_y):
+                if u[0] == 1:
+                    if u[1] == 1:
+                        correct_t += 1
+                    else:
+                        correct_f += 1
 
-            if g1 and g2 and g1 == g2:
-                correct += 1
-
-            total += 1.
+            k += 1
 
     end = time.time()
 
-    print '\tTime: %f seconds' % (end - start)
-    print '\tAccuracy: %f\tCorrect: %d\tTotal: %d' % ((correct / total), correct, total)
+    total_f = total - total_t
+    accuracy = correct / total
+    accuracy_t = correct_t / total_t
+    accuracy_f = correct_f / total_f
 
-
-
-
+    print '\n\tTime: %f seconds' % (end - start)
+    print '\tAcc Total:     %f\tCorrect: %d\tTotal: %d' % (accuracy, correct, total)
+    print '\tAcc Anaph:     %f\tCorrect: %d\tTotal: %d' % (accuracy_t, correct_t, total_t)
+    print '\tAcc Non-Anaph: %f\tCorrect: %d\tTotal: %d' % (accuracy_f, correct_f, total_f)

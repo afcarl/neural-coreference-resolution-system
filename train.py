@@ -122,25 +122,24 @@ def main(argv):
         mode='FAST_RUN'
     )
 
-    """
     test_model = theano.function(
-        inputs=[x],
-        outputs=[classifier.y_pred, classifier.p_y],
+        inputs=[x, y],
+        outputs=classifier.correct,
         mode='FAST_RUN'
     )
-    """
 
     ###############
     # TRAIN MODEL #
     ###############
 
     n_samples = len(tr_sample_x)
-    print 'Training the model...\n'
+    print 'Training START\n'
 
     for epoch in xrange(argv.epoch):
         tr_sample_x, tr_sample_y = shuffle(tr_sample_x, tr_sample_y)
 
         print '\nEpoch: %d' % (epoch + 1)
+        print 'TRAIN'
         print '\tIndex: ',
         start = time.time()
 
@@ -199,5 +198,5 @@ def main(argv):
         print '\tAcc Total:     %f\tCorrect: %d\tTotal: %d' % (accuracy, correct, total)
         print '\tAcc Anaph:     %f\tCorrect: %d\tTotal: %d' % (accuracy_t, correct_t, total_t)
         print '\tAcc Non-Anaph: %f\tCorrect: %d\tTotal: %d' % (accuracy_f, correct_f, total_f)
-#        predict(test_model, test_phi, test_mention_indices, dev_gold_mentions, dev_gold_corefs)
+        predict(test_model, dev_sample_x, dev_sample_y)
 

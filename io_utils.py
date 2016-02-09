@@ -109,16 +109,16 @@ def load_init_emb(init_emb):
 
             if w[1:-1] == UNK:
                 w = UNK
-            elif w[1:-1] == PAD:
-                w = PAD
 
-            vocab.add_word(w)
-            vec[vocab.get_id(w)] = np.asarray(line[1:], dtype=theano.config.floatX)
+            e = line[1:]
+            if len(e) == 50 or len(e) == 300:
+                vocab.add_word(w)
+                vec[vocab.get_id(w)] = np.asarray(e, dtype=theano.config.floatX)
 
     dim = len(line[1:])
 
-    if vec.get(PAD) is None:
-        vec[vocab.get_id(PAD)] = np.zeros(dim, dtype=theano.config.floatX)
+    vec[vocab.get_id(PAD)] = np.zeros(dim, dtype=theano.config.floatX)
+    vec[vocab.get_id(UNK)] = np.zeros(dim, dtype=theano.config.floatX)
 
     emb = [[] for i in xrange(vocab.size())]
     for k, v in vec.items():

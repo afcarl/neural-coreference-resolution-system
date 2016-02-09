@@ -411,7 +411,7 @@ def get_cand_mention_features(doc, cand_mentions, gold_mentions, gold_corefs, te
         cand_antecedents.reverse()
 
         """ Filter the number of the candidate antecedents """
-        if len(cand_antecedents) > 2:
+        if len(cand_antecedents) > 2 and test is False:
             cand_antecedents = cand_antecedents[:2]
 
         """ Extract features of the candidate antecedents """

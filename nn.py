@@ -1,7 +1,7 @@
 import theano
 import theano.tensor as T
 
-from nn_utils import sample_weights, L2_sqr, sigmoid, relu
+from nn_utils import sample_weights, L2_sqr, sigmoid, tanh, relu
 from optimizers import adam
 
 
@@ -35,8 +35,8 @@ class Model(object):
 
         """ Network """
         x_in = emb[x]  # x_in: 1D: batch, 2D: n_phi, 3D: dim_x
-        h1 = relu(T.dot(x_in.reshape((x_in.shape[0], -1)), self.W_in))  # h1: 1D: batch, 2D: dim_h
-        h2 = relu(T.dot(h1, self.W_h))  # h2: 1D: batch, 2D: dim_h
+        h1 = tanh(T.dot(x_in.reshape((x_in.shape[0], -1)), self.W_in))  # h1: 1D: batch, 2D: dim_h
+        h2 = tanh(T.dot(h1, self.W_h))  # h2: 1D: batch, 2D: dim_h
         self.p_y = sigmoid(T.dot(h2, self.W_out)).flatten()  # p_y: 1D: batch
 
         """ Predicts """
