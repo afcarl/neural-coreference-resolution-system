@@ -1,12 +1,10 @@
-__author__ = 'hiroki'
-
 import sys
 import time
+import math
 
-from io import Vocab, load_conll, load_init_emb
+from io_utils import Vocab, load_conll, load_init_emb
 from utils import get_init_emb, shuffle
-from preprocess import get_gold_mentions, get_cand_mentions, check_coverage_of_cand_mentions, \
-    convert_words_into_ids, get_features, convert_into_theano_input_format
+from preprocess import get_gold_mentions, get_cand_mentions, check_coverage_of_cand_mentions, convert_words_into_ids, get_features, convert_into_theano_input_format
 from nn import Model
 from test import predict
 
@@ -83,14 +81,19 @@ def main(argv):
     print '\n\tExtracting features'
     tr_x, tr_y, tr_p = get_features(train_word_ids, train_cand_mentions, train_gold_mentions, train_gold_corefs)
     dev_x, dev_y, dev_p = get_features(dev_word_ids, dev_cand_mentions, dev_gold_mentions, dev_gold_corefs, True)
+
     tr_sample_x, tr_sample_y = convert_into_theano_input_format(tr_x, tr_y)
     dev_sample_x, dev_sample_y = convert_into_theano_input_format(dev_x, dev_y)
-    count_tr_phi_t = reduce(lambda a, b: a + reduce(lambda c, d: c + np.sum(d), b, 0), tr_sample_y, 0)
-    count_tr_phi_total = reduce(lambda a, b: a + reduce(lambda c, d: c + len(d), b, 0), tr_sample_y, 0)
-    count_dev_phi_t = reduce(lambda a, b: a + reduce(lambda c, d: c + np.sum(d), b, 0), dev_sample_y, 0)
-    count_dev_phi_total = reduce(lambda a, b: a + reduce(lambda c, d: c + len(d), b, 0), dev_sample_y, 0)
-    print '\tTrain Features P:N\t%d:%d' % (count_tr_phi_t, count_tr_phi_total)
-    print '\tTest  Features P:N\t%d:%d' % (count_dev_phi_t, count_dev_phi_total)
+
+    n_tr_phi_total = reduce(lambda a, b: a + reduce(lambda c, d: c + len(d), b, 0), tr_sample_y, 0)
+    n_tr_phi_t = reduce(lambda a, b: a + reduce(lambda c, d: c + np.sum(d), b, 0), tr_sample_y, 0)
+    n_tr_phi_f = n_tr_phi_total - n_tr_phi_t
+
+    n_dev_phi_total = reduce(lambda a, b: a + reduce(lambda c, d: c + len(d), b, 0), dev_sample_y, 0)
+    n_dev_phi_t = reduce(lambda a, b: a + reduce(lambda c, d: c + np.sum(d), b, 0), dev_sample_y, 0)
+    n_dev_phi_f = n_dev_phi_total - n_dev_phi_t
+    print '\tTrain Features Total: %d\tRate: P:N\t%d:%d' % (n_tr_phi_total, n_tr_phi_t, n_tr_phi_f)
+    print '\tTest  Features Total: %d\tRate: P:N\t%d:%d' % (n_dev_phi_total, n_dev_phi_t, n_dev_phi_f)
 
     ######################
     # BUILD ACTUAL MODEL #
@@ -99,34 +102,39 @@ def main(argv):
     print '\nBuilding the model...'
 
     """ Allocate symbolic variables """
-    x = T.fmatrix('x')
-    y = T.fvector('y')
+    x = T.imatrix('x')
+    y = T.ivector('y')
 
     """ Set params for the model """
-    dim_x = len(tr_sample_x[0])
+    n_vocab = vocab_word.size()
+    dim_x = argv.emb
     dim_h = argv.hidden
     L2_reg = argv.reg
     batch = argv.batch
-    n_batch_samples = len(tr_sample_x) / batch + 1
 
     """ Build the model """
-    classifier = Model(x=x, y=y, dim_x=dim_x, dim_h=dim_h, n_label=1, L2_reg=L2_reg)
+    classifier = Model(x=x, y=y, init_emb=emb, n_vocab=n_vocab, dim_x=dim_x, dim_h=dim_h, n_label=1, L2_reg=L2_reg)
 
     train_model = theano.function(
         inputs=[x, y],
-        outputs=classifier.nll,
-        updates=classifier.updates
+        outputs=[classifier.nll, classifier.correct],
+        updates=classifier.updates,
+        mode='FAST_RUN'
     )
 
+    """
     test_model = theano.function(
         inputs=[x],
-        outputs=[classifier.y_pred, classifier.p_y]
+        outputs=[classifier.y_pred, classifier.p_y],
+        mode='FAST_RUN'
     )
+    """
 
     ###############
     # TRAIN MODEL #
     ###############
 
+    n_samples = len(tr_sample_x)
     print 'Training the model...\n'
 
     for epoch in xrange(argv.epoch):
@@ -136,27 +144,60 @@ def main(argv):
         print '\tIndex: ',
         start = time.time()
 
-        losses = []
+        loss = 0.
+        correct = 0.
+        correct_t = 0.
+        correct_f = 0.
+        total = 0.
+        total_t = 0.
+        k = 0
 
-        for b_index in xrange(n_batch_samples):
-            if b_index % 100 == 0 and b_index != 0:
-                print '%d' % b_index,
-                sys.stdout.flush()
+        for doc_index in xrange(n_samples):
+            d_sample_x = tr_sample_x[doc_index]
+            d_sample_y = tr_sample_y[doc_index]
 
-            _sample_x = tr_sample_x[b_index * batch: (b_index + 1) * batch]
-            _sample_y = tr_sample_y[b_index * batch: (b_index + 1) * batch]
+            for m_index in xrange(len(d_sample_x)):
+                if k % 1000 == 0 and k != 0:
+                    print '%d' % k,
+                    sys.stdout.flush()
 
-            if len(_sample_x) == 0:
-                continue
+                _sample_x = d_sample_x[m_index]
+                _sample_y = d_sample_y[m_index]
 
-            loss = train_model(_sample_x, _sample_y)
-            losses.append(loss)
+                l, c = train_model(_sample_x, _sample_y)
+
+                if math.isnan(l):
+                    print 'Doc Index: %d, Mention Index: %d' % (doc_index, m_index)
+                    exit()
+
+                loss += l
+                correct += np.sum(c)
+                total += len(_sample_y)
+                total_t += np.sum(_sample_y)
+
+                for u in zip(c, _sample_y):
+                    if u[0] == 1:
+                        if u[1] == 1:
+                            correct_t += 1
+                        else:
+                            correct_f += 1
+
+                k += 1
+
+                if m_index < -1000:
+                    break
 
         end = time.time()
-        avg_loss = np.mean(losses)
+        avg_loss = loss / k
 
-        print '\tTime: %f seconds' % (end - start)
-        print '\tAverage Negative Log Likelihood: %f' % avg_loss
+        total_f = total - total_t
+        accuracy = correct / total
+        accuracy_t = correct_t / total_t
+        accuracy_f = correct_f / total_f
 
-        predict(test_model, test_phi, test_mention_indices, dev_gold_mentions, dev_gold_corefs)
+        print '\n\tAverage Negative Log Likelihood: %f\tTime: %f seconds' % (avg_loss, (end - start))
+        print '\tAcc Total:     %f\tCorrect: %d\tTotal: %d' % (accuracy, correct, total)
+        print '\tAcc Anaph:     %f\tCorrect: %d\tTotal: %d' % (accuracy_t, correct_t, total_t)
+        print '\tAcc Non-Anaph: %f\tCorrect: %d\tTotal: %d' % (accuracy_f, correct_f, total_f)
+#        predict(test_model, test_phi, test_mention_indices, dev_gold_mentions, dev_gold_corefs)
 

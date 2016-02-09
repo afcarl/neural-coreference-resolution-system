@@ -1,6 +1,3 @@
-__author__ = 'hiroki'
-
-
 import numpy as np
 from nn_utils import sample_weights, get_zeros
 

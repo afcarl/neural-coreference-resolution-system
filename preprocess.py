@@ -1,9 +1,6 @@
-__author__ = 'hiroki'
-
 import re
 
-from io import UNK
-from utils import shuffle
+from io_utils import UNK
 
 import numpy as np
 
@@ -282,12 +279,11 @@ def convert_words_into_ids(corpus, vocab_word):
 
 def get_features(id_corpus, cand_mentions, gold_mentions=None, gold_corefs=None, test=False, window=5):
     """
-    :param window:
-    :param gold_corefs:
     :param id_corpus: 1D: n_doc, 2D; n_sents, 3D: n_words; elem=word_id
-    :param gold_mentions: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=(bos, eos)
     :param cand_mentions: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=(bos, eos)
-    :return: features: 1D: n_doc, 2D: n_sents, 3D: n_words * 2
+    :param gold_mentions: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=(bos, eos)
+    :param gold_corefs: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=coref_id
+    :return: features: 1D: n_doc, 2D: n_mentions, 3D: n_window * 2
     """
 
 #    if gold_mentions:

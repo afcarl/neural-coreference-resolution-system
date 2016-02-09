@@ -1,5 +1,3 @@
-__author__ = 'hiroki'
-
 from collections import OrderedDict
 
 import numpy as np

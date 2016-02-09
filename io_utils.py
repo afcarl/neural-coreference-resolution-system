@@ -1,5 +1,3 @@
-__author__ = 'hiroki'
-
 import re
 from collections import defaultdict
 

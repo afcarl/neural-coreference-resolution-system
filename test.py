@@ -1,5 +1,3 @@
-__author__ = 'hiroki'
-
 import sys
 import time
 
