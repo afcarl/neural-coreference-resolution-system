@@ -1,6 +1,5 @@
 __author__ = 'hiroki'
 
-
 import re
 
 from io import UNK
@@ -12,7 +11,7 @@ RE_PH = re.compile(ur'[A-Z]+')
 NON_ANA = '-'
 
 
-def get_gold_mentions(corpus):
+def get_gold_mentions(corpus, check=False):
     """
     :param corpus: 1D: n_doc, 2D: n_sents, 3D: n_words; elem=(doc_id, part_id, word, tag, syn, ne, coref)
     :return: gold_mentions: 1D: n_doc, 2D: n_sents, 3D: n_mentions: elem=(bos, eos)
@@ -39,6 +38,16 @@ def get_gold_mentions(corpus):
 
     assert len(gold_mentions) == len(gold_corefs)
     print 'Gold Mentions: %d' % count
+
+    if check:
+        with open('gold_mentions.txt', 'w') as f:
+            for doc, doc_mentions, doc_corefs in zip(corpus, gold_mentions, gold_corefs):
+                for sent, sent_mentions, sent_corefs in zip(doc, doc_mentions, doc_corefs):
+                    print >> f, '%s %s' % (str(sent_mentions), str(sent_corefs))
+                    for i, w in enumerate(sent):
+                        print >> f, '%d\t%s\t%s' % (i, w[2].encode('utf-8'), w[-1].encode('utf-8'))
+                    print >> f
+
     return gold_mentions, gold_corefs
 
 
@@ -120,10 +129,10 @@ def get_mentions_bio(sent):
 
         mentions.append(mention)
 
-    return mentions    
+    return mentions
 
 
-def get_cand_mentions(corpus):
+def get_cand_mentions(corpus, check=False):
     """
     :param corpus: 1D: n_doc, 2D: n_sents, 3D: n_words; elem=(doc_id, part_id, word, tag, syn, ne, coref_id)
     :return: cand: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=(bos, eos)
@@ -144,13 +153,23 @@ def get_cand_mentions(corpus):
 
             """ Removing duplicates, and sorting """
             mention = list(set(mention))
-#            mention.sort()
+            mention.sort()
             mentions.append(mention)
             count += len(mention)
 
         cand_mentions.append(mentions)
 
     print 'Cand Mentions: %d' % count
+
+    if check:
+        with open('cand_mentions.txt', 'w') as f:
+            for doc, doc_mentions in zip(corpus, cand_mentions):
+                for sent, sent_mentions in zip(doc, doc_mentions):
+                    print >> f, '%s' % str(sent_mentions)
+                    for i, w in enumerate(sent):
+                        print >> f, '%d\t%s\t%s' % (i, w[2].encode('utf-8'), w[-1].encode('utf-8'))
+                    print >> f
+
     return cand_mentions
 
 
@@ -261,135 +280,181 @@ def convert_words_into_ids(corpus, vocab_word):
     return id_corpus
 
 
-def get_features(id_corpus, gold_mentions, cand_mentions, gold_corefs, emb):
+def get_features(id_corpus, cand_mentions, gold_mentions=None, gold_corefs=None, test=False, window=5):
     """
+    :param window:
+    :param gold_corefs:
     :param id_corpus: 1D: n_doc, 2D; n_sents, 3D: n_words; elem=word_id
     :param gold_mentions: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=(bos, eos)
     :param cand_mentions: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=(bos, eos)
     :return: features: 1D: n_doc, 2D: n_sents, 3D: n_words * 2
     """
 
-    def get_head_word_id(sent_index, head_index):
-        return doc[sent_index][head_index]
+#    if gold_mentions:
+#        test = False
+#    else:
+#        test = True
 
-    def get_antecedent(coref_id, antecedents):
-        """
-        :return: the closest antecedent
-        """
+    x = []
+    y = []
+    posit = []
+
+    for i, doc in enumerate(id_corpus):
+        # x_i: 1D: n_phi, 2D: window * 2
+        # y_i: 1D: n_phi; elem=oracle flag (1=true, 0=false)
+
+        if test is False:
+            x_i, y_i, posit_i = get_gold_mention_features(doc=doc, gold_mentions=gold_mentions[i],
+                                                          gold_corefs=gold_corefs[i], window=window)
+            x.append(x_i)
+            y.append(y_i)
+            posit.append(posit_i)
+
+        x_i, y_i, posit_i = get_cand_mention_features(doc=doc, cand_mentions=cand_mentions[i],
+                                                      gold_mentions=gold_mentions[i], gold_corefs=gold_corefs[i],
+                                                      test=test, window=window)
+        x.append(x_i)
+        y.append(y_i)
+        posit.append(posit_i)
+
+    return x, y, posit
+
+
+def get_context_word_id(doc, sent_index, head_index, slide, pad):
+    head_index += slide
+    padded_sent = pad + doc[sent_index] + pad
+    return padded_sent[head_index - slide: head_index + slide + 1]
+
+
+def get_gold_mention_features(doc, gold_mentions, gold_corefs, window=5):
+    def get_antecedents(coref_id, antecedents):
         antecedents.reverse()
-        for a in antecedents:
-            if coref_id == a[-1]:
-                return [a]
-        return []
+        return [ant for ant in antecedents if ant[-1] == coref_id]
 
-    def get_negative_sample(ment, ant):
-        m_sent_id = ment[0]
-        a_sent_id = ant[0]
-        a_bos = ant[1][1]
-        assert a_sent_id <= m_sent_id
+    slide = window / 2
+    pad = [0 for k in xrange(slide)]
 
-        for cands in c_mentions[a_sent_id:m_sent_id+1]:
-            for c in cands:
-                if a_bos < c[1][1]:
-                    return [c]
-        return []
+    x = []
+    y = []
+    posit = []
 
-    p_features = []
-    n_features = []
+    """ Convert sent level into document level, and remove [] """
+    g_mentions = []
+    for s_i, sent in enumerate(zip(gold_mentions, gold_corefs)):
+        if sent[0]:
+            for span, coref in zip(*sent):
+                g_mentions.append((s_i, span, coref))
+    g_mentions.sort()
 
-    for i, doc in enumerate(id_corpus):
-        """ Convert sent level into document level, and remove [] """
-        g_mentions = []
-        for s_i, sent in enumerate(zip(gold_mentions[i], gold_corefs[i])):
-            if sent[0]:
-                for span, coref in zip(*sent):
-                    g_mentions.append((s_i, span, coref))
-        g_mentions.sort()
+    """ Extract features """
+    for j, mention in enumerate(g_mentions):
+        x_j = []
+        posit_j = []
 
-        c_mentions = [[(s_i, span) for span in sent] for s_i, sent in enumerate(cand_mentions[i]) if sent]
-        c_mentions.sort()
+        sent_i, span, _ = mention
 
-        for j, mention in enumerate(g_mentions):
-            m_head_id = get_head_word_id(sent_index=mention[0], head_index=mention[1][1])
-            m_phi = emb[m_head_id]
+        """ Extract features of the target mention """
+        mention_context = get_context_word_id(doc=doc, sent_index=sent_i, head_index=span[1], slide=slide, pad=pad)
 
-            gold_ants = get_antecedent(coref_id=mention[-1], antecedents=g_mentions[:j])
+        """ Extract features of the gold antecedents """
+        gold_antecedents = get_antecedents(coref_id=mention[-1], antecedents=g_mentions[:j])
+        for gold_ant in gold_antecedents:
+            sent_a_i, span_a, _ = gold_ant
+            ant_context = get_context_word_id(doc=doc, sent_index=sent_a_i, head_index=span_a[1], slide=slide, pad=pad)
 
-            for gold_a in gold_ants:
-                a_head_id = get_head_word_id(sent_index=gold_a[0], head_index=gold_a[1][1])
-                a_phi = emb[a_head_id]
-                p_features.append(np.concatenate((m_phi, a_phi)))
+            x_j.append(mention_context + ant_context)
+            posit_j.append((sent_i, span, sent_a_i, span_a))
 
-                neg_cand_a = get_negative_sample(ment=mention, ant=gold_a)
+        if x_j:
+            x.append(x_j)
+            y.append([1 for i in xrange(len(x_j))])
+            posit.append(posit_j)
 
-                for neg_a in neg_cand_a:
-                    n_head_id = get_head_word_id(sent_index=neg_a[0], head_index=neg_a[1][1])
-                    n_phi = emb[n_head_id]
-
-                    n_features.append(np.concatenate((m_phi, n_phi)))
-
-    return p_features, n_features
+    assert len(x) == len(y) == len(posit)
+    return x, y, posit
 
 
-def get_test_features(id_corpus, cand_mentions, emb):
-    """
-    :param id_corpus: 1D: n_doc, 2D; n_sents, 3D: n_words; elem=word_id
-    :param cand_mentions: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=(bos,eos)
-    :return: features: 1D: n_sents * n_cand_mentions, 2D: word_dim * 2
-    :return: mention_indices: 1D: n_sents * n_cand_mentions; elem=((sent_index, i, j),(sent_index, i, j))
-    """
+def get_cand_mention_features(doc, cand_mentions, gold_mentions, gold_corefs, test=False, window=5):
+    slide = window / 2
+    pad = [0 for k in xrange(slide)]
 
-    def get_head_word_id(sent_index, head_index):
-        return doc[sent_index][head_index]
+    x = []
+    y = []
+    posit = []
 
-    features = []
-    mention_indices = []
+    """ Convert sent level into document level, and remove [] """
+    c_mentions = []
+    for s_i, sent in enumerate(cand_mentions):
+        for span in sent:
+            c_mentions.append((s_i, span[0], span[1]))
+    c_mentions.sort()
 
-    for i, doc in enumerate(id_corpus):
-        doc_features = []
-        doc_indices = []
+    for j, mention in enumerate(c_mentions):
+        x_j = []
+        y_j = []
+        posit_j = []
 
-        c_mentions = []
-        for s_i, sent in enumerate(cand_mentions[i]):
-            for span in sent:
-                c_mentions.append((s_i, span[0], span[1]))
-        c_mentions.sort()
+        sent_i, bos, eos = mention
+        span = (bos, eos)
 
-        for j, mention in enumerate(c_mentions):
-            phi = []
-            m_indices = []
+        g_mention_spans = gold_mentions[sent_i]
+        g_coref_ids = gold_corefs[sent_i]
 
-            sent_i, bos, eos = mention
-            m_head_id = get_head_word_id(sent_index=sent_i, head_index=eos)
-            m_phi = emb[m_head_id]
+        m_gold_flag = False
+        m_coref_id = -1
 
-            cands = c_mentions[:j]
-            cands.reverse()
-            if len(cands) > 10:
-                cands = cands[:10]
+        if span in g_mention_spans:
+            m_gold_flag = True
+            m_coref_id = g_coref_ids[g_mention_spans.index(span)]
 
-            for cand in cands:
-                sent_c_i, c_bos, c_eos = cand
-                a_head_id = get_head_word_id(sent_index=sent_c_i, head_index=c_eos)
-                a_phi = emb[a_head_id]
+        """ Extract features of the target mention """
+        mention_context = get_context_word_id(doc=doc, sent_index=sent_i, head_index=bos, slide=slide, pad=pad)
 
-                phi.append(np.concatenate((m_phi, a_phi)))
-                m_indices.append(((sent_i, (bos, eos)), (sent_c_i, (c_bos, c_eos))))
+        """ Extract the candidate antecedents """
+        cand_antecedents = c_mentions[:j]
+        cand_antecedents.reverse()
 
-            doc_features.append(phi)
-            doc_indices.append(m_indices)
+        """ Filter the number of the candidate antecedents """
+        if len(cand_antecedents) > 2:
+            cand_antecedents = cand_antecedents[:2]
 
-        features.append(doc_features)
-        mention_indices.append(doc_indices)
+        """ Extract features of the candidate antecedents """
+        for cand_ant in cand_antecedents:
+            sent_c_i, c_bos, c_eos = cand_ant
+            ant_context = get_context_word_id(doc=doc, sent_index=sent_c_i, head_index=c_eos, slide=slide, pad=pad)
 
-    assert len(features) == len(mention_indices)
-    return features, mention_indices
+            span_c = (c_bos, c_eos)
+
+            g_mention_spans = gold_mentions[sent_c_i]
+            g_coref_ids = gold_corefs[sent_c_i]
+
+            c_gold_flag = False
+            c_coref_id = -1
+
+            if span_c in g_mention_spans:
+                c_gold_flag = True
+                c_coref_id = g_coref_ids[g_mention_spans.index(span_c)]
+
+            if m_gold_flag and c_gold_flag and m_coref_id == c_coref_id:
+                if test:
+                    x_j.append(mention_context + ant_context)
+                    y_j.append(1)
+                    posit_j.append((sent_i, span, sent_c_i, span_c))
+            else:
+                x_j.append(mention_context + ant_context)
+                y_j.append(0)
+                posit_j.append((sent_i, span, sent_c_i, span_c))
+
+        if x_j:
+            x.append(x_j)
+            y.append(y_j)
+            posit.append(posit_j)
+
+    assert len(x) == len(y) == len(posit)
+    return x, y, posit
 
 
-def convert_into_theano_input_format(p_phi, n_phi):
-    sample_x = np.concatenate((p_phi, n_phi), axis=0)
-    sample_y = np.concatenate((np.ones((len(p_phi))), np.zeros((len(n_phi)))), axis=0)
-
-    assert len(sample_x) == len(sample_y)
-
-    return shuffle(sample_x, sample_y)
+def convert_into_theano_input_format(x, y):
+    sample_x = [[np.asarray(x_j, dtype='int32') for x_j in x_i] for x_i in x]
+    sample_y = [[np.asarray(y_j, dtype='int32') for y_j in y_i] for y_i in y]
+    return sample_x, sample_y

@@ -6,7 +6,7 @@ import time
 from io import Vocab, load_conll, load_init_emb
 from utils import get_init_emb, shuffle
 from preprocess import get_gold_mentions, get_cand_mentions, check_coverage_of_cand_mentions, \
-    convert_words_into_ids, get_features, convert_into_theano_input_format, get_test_features
+    convert_words_into_ids, get_features, convert_into_theano_input_format
 from nn import Model
 from test import predict
 
@@ -52,7 +52,7 @@ def main(argv):
     # gold_corefs: 1D: n_doc, 2D: n_sents, 3D: n_mentions: elem=coref_id
     print '\n\tExtracting Gold Mentions...'
     print '\t\tTRAIN',
-    train_gold_mentions, train_gold_corefs = get_gold_mentions(train_corpus)
+    train_gold_mentions, train_gold_corefs = get_gold_mentions(train_corpus, check=argv.check)
     print '\t\tDEV  ',
     dev_gold_mentions, dev_gold_corefs = get_gold_mentions(dev_corpus)
 
@@ -60,7 +60,7 @@ def main(argv):
     # cand_mentions: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=(bos, eos)
     print '\n\tExtracting Cand Mentions...'
     print '\t\tTRAIN',
-    train_cand_mentions = get_cand_mentions(train_corpus)
+    train_cand_mentions = get_cand_mentions(train_corpus, check=argv.check)
     print '\t\tDEV  ',
     dev_cand_mentions = get_cand_mentions(dev_corpus)
 
@@ -81,13 +81,16 @@ def main(argv):
 
     """ Extract features """
     print '\n\tExtracting features'
-    pos_phi, neg_phi = get_features(train_word_ids, train_gold_mentions, train_cand_mentions, train_gold_corefs, emb)
-    test_phi, test_mention_indices = get_test_features(dev_word_ids, dev_cand_mentions, emb)
-    print '\tTrain Features P:N\t%d:%d' % (len(pos_phi), len(neg_phi))
-    print '\tTest Features: %d' % len(test_phi)
-
-    """ Convert features into theano input format """
-    sample_x, sample_y = convert_into_theano_input_format(pos_phi, neg_phi)
+    tr_x, tr_y, tr_p = get_features(train_word_ids, train_cand_mentions, train_gold_mentions, train_gold_corefs)
+    dev_x, dev_y, dev_p = get_features(dev_word_ids, dev_cand_mentions, dev_gold_mentions, dev_gold_corefs, True)
+    tr_sample_x, tr_sample_y = convert_into_theano_input_format(tr_x, tr_y)
+    dev_sample_x, dev_sample_y = convert_into_theano_input_format(dev_x, dev_y)
+    count_tr_phi_t = reduce(lambda a, b: a + reduce(lambda c, d: c + np.sum(d), b, 0), tr_sample_y, 0)
+    count_tr_phi_total = reduce(lambda a, b: a + reduce(lambda c, d: c + len(d), b, 0), tr_sample_y, 0)
+    count_dev_phi_t = reduce(lambda a, b: a + reduce(lambda c, d: c + np.sum(d), b, 0), dev_sample_y, 0)
+    count_dev_phi_total = reduce(lambda a, b: a + reduce(lambda c, d: c + len(d), b, 0), dev_sample_y, 0)
+    print '\tTrain Features P:N\t%d:%d' % (count_tr_phi_t, count_tr_phi_total)
+    print '\tTest  Features P:N\t%d:%d' % (count_dev_phi_t, count_dev_phi_total)
 
     ######################
     # BUILD ACTUAL MODEL #
@@ -100,11 +103,11 @@ def main(argv):
     y = T.fvector('y')
 
     """ Set params for the model """
-    dim_x = len(sample_x[0])
+    dim_x = len(tr_sample_x[0])
     dim_h = argv.hidden
     L2_reg = argv.reg
     batch = argv.batch
-    n_batch_samples = len(sample_x) / batch + 1
+    n_batch_samples = len(tr_sample_x) / batch + 1
 
     """ Build the model """
     classifier = Model(x=x, y=y, dim_x=dim_x, dim_h=dim_h, n_label=1, L2_reg=L2_reg)
@@ -127,7 +130,7 @@ def main(argv):
     print 'Training the model...\n'
 
     for epoch in xrange(argv.epoch):
-        sample_x, sample_y = shuffle(sample_x, sample_y)
+        tr_sample_x, tr_sample_y = shuffle(tr_sample_x, tr_sample_y)
 
         print '\nEpoch: %d' % (epoch + 1)
         print '\tIndex: ',
@@ -140,8 +143,8 @@ def main(argv):
                 print '%d' % b_index,
                 sys.stdout.flush()
 
-            _sample_x = sample_x[b_index * batch: (b_index + 1) * batch]
-            _sample_y = sample_y[b_index * batch: (b_index + 1) * batch]
+            _sample_x = tr_sample_x[b_index * batch: (b_index + 1) * batch]
+            _sample_y = tr_sample_y[b_index * batch: (b_index + 1) * batch]
 
             if len(_sample_x) == 0:
                 continue

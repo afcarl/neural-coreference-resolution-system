@@ -17,6 +17,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_data',  help='path to training data')
     parser.add_argument('--dev_data',  help='path to dev data')
     parser.add_argument('--test_data',  help='path to test data')
+    parser.add_argument('--check', default=False, help='print each steps')
 
     """ NN architecture """
     parser.add_argument('--unit',  default='lstm', help='Unit')
