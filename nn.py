@@ -40,7 +40,8 @@ class Model(object):
         self.p_y = sigmoid(T.dot(h2, self.W_out)).flatten()  # p_y: 1D: batch
 
         """ Predicts """
-        self.y_pred = T.argmax(self.p_y, axis=0)
+        self.y_hat_index = T.argmax(self.p_y, axis=0)
+        self.y_hat_p = self.p_y[self.y_hat_index]
         self.y_pair_pred = binary_predict(self.p_y)
 
         """ Cost Function """

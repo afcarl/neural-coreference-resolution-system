@@ -124,7 +124,7 @@ def main(argv):
 
     test_model = theano.function(
         inputs=[x, y],
-        outputs=classifier.correct,
+        outputs=[classifier.correct, classifier.y_hat_index, classifier.y_hat_p],
         mode='FAST_RUN'
     )
 
@@ -183,9 +183,6 @@ def main(argv):
 
                 k += 1
 
-                if m_index < -1000:
-                    break
-
         end = time.time()
         avg_loss = loss / k
 
@@ -198,5 +195,5 @@ def main(argv):
         print '\tAcc Total:     %f\tCorrect: %d\tTotal: %d' % (accuracy, correct, total)
         print '\tAcc Anaph:     %f\tCorrect: %d\tTotal: %d' % (accuracy_t, correct_t, total_t)
         print '\tAcc Non-Anaph: %f\tCorrect: %d\tTotal: %d' % (accuracy_f, correct_f, total_f)
-        predict(test_model, dev_sample_x, dev_sample_y)
+        predict(test_model, dev_corpus, dev_sample_x, dev_sample_y, dev_p)
 
