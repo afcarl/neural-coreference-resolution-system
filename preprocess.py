@@ -1,4 +1,5 @@
 import re
+from copy import deepcopy
 
 from io_utils import UNK
 
@@ -191,7 +192,28 @@ def get_np(sent):
             non_term_symbol, bos = tmp_spans.pop()
             spans.append((non_term_symbol, bos, i))
 
-    return [(bos, eos) for symbol, bos, eos in spans if symbol == 'NP']
+#    return [(bos, eos) for symbol, bos, eos in spans if symbol == 'NP']
+    return get_max_np(spans)
+
+
+def get_max_np(spans):
+    max_np = []
+
+    for symbol, bos, eos in spans:
+        if symbol != 'NP':
+            continue
+        for t_symbol, t_bos, t_eos in spans:
+            if t_symbol == symbol == 'NP':
+                if t_bos < bos and eos < t_eos:
+                    break
+                elif t_bos == bos and eos < t_eos:
+                    break
+                elif t_bos < bos and eos == t_eos:
+                    break
+        else:
+            max_np.append((bos, eos))
+
+    return max_np
 
 
 def get_pronominals(sent):
@@ -286,10 +308,10 @@ def get_features(id_corpus, cand_mentions, gold_mentions=None, gold_corefs=None,
     :return: features: 1D: n_doc, 2D: n_mentions, 3D: n_window * 2
     """
 
-#    if gold_mentions:
-#        test = False
-#    else:
-#        test = True
+    #    if gold_mentions:
+    #        test = False
+    #    else:
+    #        test = True
 
     x = []
     y = []
@@ -417,9 +439,19 @@ def get_cand_mention_features(doc, cand_mentions, gold_mentions, gold_corefs, te
         """ Extract features of the candidate antecedents """
         for cand_ant in cand_antecedents:
             sent_c_i, c_bos, c_eos = cand_ant
-            ant_context = get_context_word_id(doc=doc, sent_index=sent_c_i, head_index=c_eos, slide=slide, pad=pad)
-
             span_c = (c_bos, c_eos)
+
+            """ Check errors """
+            if sent_c_i < sent_i:
+                pass
+            elif sent_c_i == sent_i and c_bos > bos:
+                print 'Error: sent:%d span(%d,%d), sent:%d span(%d,%d)' % (sent_i, bos, eos, sent_c_i, c_bos, c_eos)
+                exit()
+            elif sent_c_i > sent_i:
+                print 'Error: sent:%d span(%d,%d), sent:%d span(%d,%d)' % (sent_i, bos, eos, sent_c_i, c_bos, c_eos)
+                exit()
+
+            ant_context = get_context_word_id(doc=doc, sent_index=sent_c_i, head_index=c_eos, slide=slide, pad=pad)
 
             g_mention_spans = gold_mentions[sent_c_i]
             g_coref_ids = gold_corefs[sent_c_i]
@@ -427,6 +459,7 @@ def get_cand_mention_features(doc, cand_mentions, gold_mentions, gold_corefs, te
             c_gold_flag = False
             c_coref_id = -1
 
+            """ Check whether gold span or not """
             if span_c in g_mention_spans:
                 c_gold_flag = True
                 c_coref_id = g_coref_ids[g_mention_spans.index(span_c)]

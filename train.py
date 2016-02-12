@@ -195,5 +195,5 @@ def main(argv):
         print '\tAcc Total:     %f\tCorrect: %d\tTotal: %d' % (accuracy, correct, total)
         print '\tAcc Anaph:     %f\tCorrect: %d\tTotal: %d' % (accuracy_t, correct_t, total_t)
         print '\tAcc Non-Anaph: %f\tCorrect: %d\tTotal: %d' % (accuracy_f, correct_f, total_f)
-        predict(test_model, dev_corpus, dev_sample_x, dev_sample_y, dev_p)
 
+        predict(epoch, test_model, dev_corpus, dev_sample_x, dev_sample_y, dev_p)

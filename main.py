@@ -32,7 +32,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr2', type=float, default=0.01, help='learning rate')
     parser.add_argument('--reg', type=float, default=0.001, help='L2 Reg rate')
     parser.add_argument('--batch', type=int, default=32, help='batch size')
-    parser.add_argument('--epoch', type=int, default=500, help='number of epochs to train')
+    parser.add_argument('--epoch', type=int, default=10, help='number of epochs to train')
     parser.add_argument('--no-shuffle', action='store_true', default=False, help='don\'t shuffle training data')
 
     """ test options """
