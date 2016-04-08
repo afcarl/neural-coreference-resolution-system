@@ -5,7 +5,7 @@ import random
 
 from io_utils import Vocab, load_conll, load_init_emb
 from utils import get_init_emb
-from preprocess import get_gold_mentions, get_cand_mentions, check_coverage_of_cand_mentions, convert_words_into_ids, get_features, convert_into_theano_format
+from preprocess import get_gold_mentions, get_cand_mentions, check_coverage_of_cand_mentions, convert_words_into_ids, get_features, theano_format
 from nn import Model
 from test import predict
 
@@ -51,29 +51,29 @@ def main(argv):
     # gold_corefs: 1D: n_doc, 2D: n_sents, 3D: n_mentions: elem=coref_id
     print '\n\tExtracting Gold Mentions...'
     print '\t\tTRAIN',
-    train_gold_mentions, train_gold_corefs = get_gold_mentions(train_corpus, check=argv.check)
+    tr_gold_ments, tr_gold_corefs = get_gold_mentions(train_corpus, check=argv.check)
     print '\t\tDEV  ',
-    dev_gold_mentions, dev_gold_corefs = get_gold_mentions(dev_corpus)
+    dev_gold_ments, dev_gold_corefs = get_gold_mentions(dev_corpus)
 
     """ Extract cand mentions """
     # cand_mentions: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=(bos, eos)
     print '\n\tExtracting Cand Mentions...'
     print '\t\tTRAIN',
-    train_cand_mentions = get_cand_mentions(train_corpus, check=argv.check)
+    tr_cand_ments = get_cand_mentions(train_corpus, check=argv.check)
     print '\t\tDEV  ',
-    dev_cand_mentions = get_cand_mentions(dev_corpus)
+    dev_cand_ments = get_cand_mentions(dev_corpus)
 
     """ Check the coverage: Coverage 95.0%, Rate 1:3.5 by Berkeley System """
     print '\n\tChecking the Coverage of the Candidate Mentions...'
-    check_coverage_of_cand_mentions(train_gold_mentions, train_cand_mentions)
-    check_coverage_of_cand_mentions(dev_gold_mentions, dev_cand_mentions)
+    check_coverage_of_cand_mentions(tr_gold_ments, tr_cand_ments)
+    check_coverage_of_cand_mentions(dev_gold_ments, dev_cand_ments)
 
     """ Convert words into IDs """
     print '\n\tConverting Words into IDs...'
     print '\t\tVocabulary Size: %d' % vocab_word.size()
 
-    train_word_ids = convert_words_into_ids(corpus=train_corpus, vocab_word=vocab_word)
-    dev_word_ids = convert_words_into_ids(corpus=dev_corpus, vocab_word=vocab_word)
+    tr_word_ids = convert_words_into_ids(corpus=train_corpus[:10], vocab_word=vocab_word)
+    dev_word_ids = convert_words_into_ids(corpus=dev_corpus[:10], vocab_word=vocab_word)
 
     if argv.test_data:
         test_word_ids = convert_words_into_ids(corpus=test_corpus, vocab_word=vocab_word)
@@ -82,40 +82,44 @@ def main(argv):
     print '\n\tExtracting features...'
 
     """
-    x_span: 1D: n_doc, 2D: n_ments, 3D: n_cand_ants, 4D: limit * 2; elem=word id
-    x_word: 1D: n_doc, 2D: n_ments, 3D: n_cand_ants, 4D: [m_first, m_last, a_first, a_last]; elem=word id
-    x_ctx: 1D: n_doc, 2D: n_ments, 3D: n_cand_ants, 4D: window * 2 * 2; elem=word id
-    x_dist: 1D: n_doc, 2D: n_ments, 3D: n_cand_ants; elem=sent dist
-    y: 1D: n_doc, 2D: n_ments; elem=0/1
-    p: 1D: n_doc, 2D: n_ments, 3D: n_cand_ants; elem=(sent_m_i, span_m, sent_a_i, span_a)
+    phi = (span, word, ctx, dist, label, position)
+    span    : 1D: n_doc, 2D: n_ments, 3D: n_cand_ants, 4D: limit * 2; elem=word id
+    word    : 1D: n_doc, 2D: n_ments, 3D: n_cand_ants, 4D: [m_first, m_last, a_first, a_last]; elem=word id
+    ctx     : 1D: n_doc, 2D: n_ments, 3D: n_cand_ants, 4D: window * 2 * 2; elem=word id
+    dist    : 1D: n_doc, 2D: n_ments, 3D: n_cand_ants; elem=sent dist
+    label   : 1D: n_doc, 2D: n_ments; elem=0/1
+    position: 1D: n_doc, 2D: n_ments, 3D: n_cand_ants; elem=(sent_m_i, span_m, sent_a_i, span_a)
     """
 
-    tr_x_span, tr_x_w, tr_x_ctx, tr_x_dist, tr_y, tr_p = get_features(train_word_ids, train_cand_mentions,
-                                                                      train_gold_mentions, train_gold_corefs)
-    dev_x_span, dev_x_w, dev_x_ctx, dev_x_dist, dev_y, dev_p = get_features(dev_word_ids, dev_cand_mentions,
-                                                                            dev_gold_mentions, dev_gold_corefs, True)
+    tr_phi  = get_features(tr_word_ids, tr_cand_ments, tr_gold_ments, tr_gold_corefs)
+    dev_phi = get_features(dev_word_ids, dev_cand_ments, dev_gold_ments, dev_gold_corefs, True)
 
-    """ Convert into the Theano format"""
-    print '\n\t Converting features into the Theano Format...'
+    """ Convert into the Theano format """
+    print '\n\tConverting features into the Theano Format...'
 
     """
-    sample_x_word: 1D: n_docs, 2D: n_ments, 3D: n_cand_ants, 4D: window * 2; elem=word id
-    sample_x_sdist: 1D: n_docs, 2D: n_ments, 3D: n_cand_ants, elem=word id
-    sample_y: 1D: n_docs, 2D: n_ments, 3D: n_cand_ants, elem=label (0/1)
+    samples = (span, word, ctx, dist, label)
+    span   : 1D: n_doc * n_ments * n_cand_ants, 2D: limit * 2; elem=word id
+    word   : 1D: n_doc * n_ments * n_cand_ants, 2D: [m_first, m_last, a_first, a_last]; elem=word id
+    ctx    : 1D: n_doc * n_ments * n_cand_ants, 2D: window * 2 * 2; elem=word id
+    dist   : 1D: n_doc * n_ments * n_cand_ants; elem=sent dist
+    label  : 1D: n_doc * n_ments * n_cand_ants; elem=0/1
+    indices: 1D: n_doc * n_ments; elem=(bos, eos)
     """
 
-    tr_sample_x_word, tr_sample_x_sdist, tr_sample_y = convert_into_theano_format(tr_x_ctx, tr_x_dist, tr_y)
-    dev_sample_x_word, dev_sample_x_sdist, dev_sample_y = convert_into_theano_format(dev_x_ctx, dev_x_dist, dev_y)
+    tr_samples, tr_indices = theano_format(tr_phi)
+    dev_samples, dev_indices = theano_format(dev_phi)
 
-    n_tr_phi_total = reduce(lambda a, b: a + reduce(lambda c, d: c + len(d), b, 0), tr_sample_y, 0)
-    n_tr_phi_t = reduce(lambda a, b: a + reduce(lambda c, d: c + np.sum(d), b, 0), tr_sample_y, 0)
+    """ Count the number of features """
+    n_tr_phi_total = reduce(lambda a, b: a + reduce(lambda c, d: c + len(d), b, 0), tr_phi[-2], 0)
+    n_tr_phi_t = reduce(lambda a, b: a + reduce(lambda c, d: c + np.sum(d), b, 0), tr_phi[-2], 0)
     n_tr_phi_f = n_tr_phi_total - n_tr_phi_t
 
-    n_dev_phi_total = reduce(lambda a, b: a + reduce(lambda c, d: c + len(d), b, 0), dev_sample_y, 0)
-    n_dev_phi_t = reduce(lambda a, b: a + reduce(lambda c, d: c + np.sum(d), b, 0), dev_sample_y, 0)
+    n_dev_phi_total = reduce(lambda a, b: a + reduce(lambda c, d: c + len(d), b, 0), dev_phi[-2], 0)
+    n_dev_phi_t = reduce(lambda a, b: a + reduce(lambda c, d: c + np.sum(d), b, 0), dev_phi[-2], 0)
     n_dev_phi_f = n_dev_phi_total - n_dev_phi_t
     print '\t\tTrain Features Total: %d\tRate: P:N\t%d:%d' % (n_tr_phi_total, n_tr_phi_t, n_tr_phi_f)
-    print '\t\tTest  Features Total: %d\tRate: P:N\t%d:%d' % (n_dev_phi_total, n_dev_phi_t, n_dev_phi_f)
+    print '\t\tDev   Features Total: %d\tRate: P:N\t%d:%d' % (n_dev_phi_total, n_dev_phi_t, n_dev_phi_f)
 
     ######################
     # BUILD ACTUAL MODEL #
@@ -123,33 +127,35 @@ def main(argv):
 
     print '\nBuilding the model...'
 
-    """ Allocate symbolic variables """
-    x_word = T.imatrix('x_word')
-    x_sdist = T.ivector('x_sdist')
-    y = T.ivector('y')
+    model = set_model(argv, vocab_word, emb)
 
-    """ Set params for the model """
-    n_vocab = vocab_word.size()
-    dim_x_word = argv.emb
-    dim_x_sdist = 11
-    dim_h = argv.hidden
-    L2_reg = argv.reg
-    batch = argv.batch
+    bos = T.iscalar('bos')
+    eos = T.iscalar('eos')
 
-    """ Build the model """
-    classifier = Model(x_word=x_word, x_sdist=x_sdist, y=y, init_emb=emb, n_vocab=n_vocab,
-                       dim_x_word=dim_x_word, dim_x_sdist=dim_x_sdist, dim_h=dim_h, n_label=1, L2_reg=L2_reg)
-
-    train_model = theano.function(
-        inputs=[x_word, x_sdist, y],
-        outputs=[classifier.nll, classifier.y_pair_pred, classifier.correct],
-        updates=classifier.updates,
+    train_f = theano.function(
+        inputs=[bos, eos],
+        outputs=[model.nll, model.correct, model.correct_t, model.correct_f, model.total_p, model.total_r],
+        updates=model.updates,
+        givens={
+            model.x_span: tr_samples[0][bos: eos],
+            model.x_word: tr_samples[1][bos: eos],
+            model.x_ctx : tr_samples[2][bos: eos],
+            model.x_dist: tr_samples[3][bos: eos],
+            model.y     : tr_samples[4][bos: eos]
+        },
         mode='FAST_RUN'
     )
 
-    test_model = theano.function(
-        inputs=[x_word, x_sdist, y],
-        outputs=[classifier.y_pair_pred, classifier.correct, classifier.y_hat_index, classifier.y_hat_p],
+    dev_f = theano.function(
+        inputs=[bos, eos],
+        outputs=[model.y_hat, model.correct, model.y_hat_index, model.p_y_hat],
+        givens={
+            model.x_span: dev_samples[0][bos: eos],
+            model.x_word: dev_samples[1][bos: eos],
+            model.x_ctx : dev_samples[2][bos: eos],
+            model.x_dist: dev_samples[3][bos: eos],
+            model.y     : dev_samples[4][bos: eos]
+        },
         mode='FAST_RUN'
     )
 
@@ -157,11 +163,14 @@ def main(argv):
     # TRAIN MODEL #
     ###############
 
-    n_samples = len(tr_sample_x_word)
+    batch_size = argv.batch
+    n_batches = n_tr_phi_total / batch_size
+    indices = range(n_batches)
+
     print 'Training START\n'
+    print 'Mini-Batch Samples: %d\n' % n_batches
 
     for epoch in xrange(argv.epoch):
-        indices = range(n_samples)
         random.shuffle(indices)
 
         print '\nEpoch: %d' % (epoch + 1)
@@ -169,49 +178,30 @@ def main(argv):
         print '\tIndex: ',
         start = time.time()
 
-        loss = 0.
+        total_loss = 0.
         correct = 0.
         correct_t = 0.
         correct_f = 0.
         total = 0.
         total_r = 0.
         total_p = 0.
-        k = 0
 
-        for doc_index in indices:
-            d_sample_x_word = tr_sample_x_word[doc_index]
-            d_sample_x_sdist = tr_sample_x_sdist[doc_index]
-            d_sample_y = tr_sample_y[doc_index]
+        for i, index in enumerate(indices):
+            if i % 100 == 0 and i != 0:
+                print '%d' % i,
+                sys.stdout.flush()
 
-            for m_index in xrange(len(d_sample_x_word)):
-                if k % 1000 == 0 and k != 0:
-                    print '%d' % k,
-                    sys.stdout.flush()
+            loss, crr, crr_t, crr_f, ttl_p, ttl_r = train_f(index * batch_size, (index+1) * batch_size)
 
-                _sample_x_word = d_sample_x_word[m_index]
-                _sample_x_sdist = d_sample_x_sdist[m_index]
-                _sample_y = d_sample_y[m_index]
+            assert not math.isnan(loss), 'Index: %d  Batch Index: %d' % (i, index)
 
-                loss_i, predict_i, correct_i = train_model(_sample_x_word, _sample_x_sdist, _sample_y)
-
-                if math.isnan(loss_i):
-                    print 'Doc Index: %d, Mention Index: %d' % (doc_index, m_index)
-                    exit()
-
-                loss += loss_i
-                correct += np.sum(correct_i)
-                total += len(_sample_y)
-                total_r += np.sum(_sample_y)
-                total_p += np.sum(predict_i)
-
-                for u in zip(correct_i, _sample_y):
-                    if u[0] == 1:
-                        if u[1] == 1:
-                            correct_t += 1
-                        else:
-                            correct_f += 1
-
-                k += 1
+            total_loss += loss
+            correct += crr
+            correct_t += crr_t
+            correct_f += crr_f
+            total += batch_size
+            total_p += ttl_p
+            total_r += ttl_r
 
         end = time.time()
 
@@ -224,11 +214,31 @@ def main(argv):
         recall = correct_t / total_r
         f = 2 * precision * recall / (precision + recall)
 
-        print '\n\tNegative Log Likelihood: %f\tTime: %f seconds' % (loss, (end - start))
+        print '\n\tNegative Log Likelihood: %f\tTime: %f seconds' % (total_loss, (end - start))
         print '\tAcc Total:     %f\tCorrect: %d\tTotal: %d' % (accuracy, correct, total)
         print '\tAcc Anaph:     %f\tCorrect: %d\tTotal: %d' % (accuracy_t, correct_t, total_r)
         print '\tAcc Non-Anaph: %f\tCorrect: %d\tTotal: %d' % (accuracy_f, correct_f, total_f)
-        print '\tPrecision:     %f\tRecall:  %f\tF1:    %f' % (precision, recall, f)
-        print '\tTotal_P:       %d\tTotal_R: %d' % (total_p, total_r)
+        print '\tPrecision:     %f\tCorrect: %d\tTotal: %d' % (precision, correct_t, total_p)
+        print '\tRecall:        %f\tCorrect: %d\tTotal: %d' % (recall, correct_t, total_r)
+        print '\tF1:            %f' % f
 
-        predict(epoch, test_model, dev_corpus, dev_doc_names, dev_sample_x_word, dev_sample_x_sdist, dev_sample_y, dev_p)
+#        predict(epoch, dev_f, dev_corpus, dev_doc_names)
+
+
+def set_model(argv, vocab_word, init_emb):
+    x_span = T.imatrix('x_span')
+    x_word = T.imatrix('x_word')
+    x_ctx  = T.imatrix('x_ctx')
+    x_dist = T.ivector('x_dist')
+    y      = T.ivector('y')
+
+    """ Set params for the model """
+    n_vocab    = vocab_word.size()
+    dim_x_word = argv.emb
+    dim_x_dist = 11  # (0, ..., 10-)
+    dim_h      = argv.hidden
+    L2_reg     = argv.reg
+
+    """ Instantiate the model """
+    return Model(x_span=x_span, x_word=x_word, x_ctx=x_ctx, x_dist=x_dist, y=y, init_emb=init_emb, n_vocab=n_vocab,
+                 dim_w=dim_x_word, dim_d=dim_x_dist, dim_h=dim_h, L2_reg=L2_reg)

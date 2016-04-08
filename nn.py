@@ -6,67 +6,78 @@ from optimizers import adam
 
 
 class Model(object):
-    def __init__(self, x_word, x_sdist, y, init_emb, n_vocab, dim_x_word, dim_x_sdist, dim_h, n_label, L2_reg):
+    def __init__(self, x_span, x_word, x_ctx, x_dist, y, init_emb, n_vocab, dim_w, dim_d, dim_h, L2_reg):
         """
-        :param x_word: 1D: n_ants, 2D: window * 2; elem=word id
-        :param x_sdist: 1D: n_ants; elem=distance between sentences of ant and ment
-        :param y: 1D: n_ants
-        :return:
+        :param x_span: 1D: batch, 2D: limit * 2 (10); elem=word id
+        :param x_word: 1D: batch, 2D: 4 (m_first, m_last, a_first, a_last); elem=word id
+        :param x_ctx : 1D: batch, 2D: window * 2 * 2 (20); elem=word id
+        :param x_dist: 1D: batch; elem=distance between sentences of ant and ment
+        :param y     : 1D: batch
         """
 
+        self.input  = [x_span, x_word, x_ctx, x_dist, y]
+        self.x_span = x_span
         self.x_word = x_word
-        self.x_sdist = x_sdist
-        self.y = y
-        self.input = [self.x_word, self.x_sdist, self.y]
+        self.x_ctx  = x_ctx
+        self.x_dist = x_dist
+        self.y      = y
 
-        self.init_emb = init_emb
-        self.n_vocab = n_vocab
-        self.dim_x_word = dim_x_word
-        self.dim_x_sdist = dim_x_sdist
-        self.dim_h = dim_h
-        self.n_label = n_label
-        self.L2_reg = L2_reg
-        self.dim_phi = dim_x_word * 10
+        dim_x = dim_w * (10 + 4 + 20) + 1
+        batch = y.shape[0]
 
         """ Params """
-        if self.init_emb is None:
-            self.emb = theano.shared(sample_weights(self.n_vocab, self.dim_x_word))
+        if init_emb is None:
+            self.emb = theano.shared(sample_weights(n_vocab, dim_w))
         else:
-            self.emb = theano.shared(self.init_emb)
+            self.emb = theano.shared(init_emb)
 
-        self.W_sdist = theano.shared(sample_weights(self.dim_x_sdist, self.dim_h))
-        self.W_in = theano.shared(sample_weights(self.dim_phi, self.dim_h))
-        self.W_h = theano.shared(sample_weights(self.dim_h, self.dim_h))
-        self.W_out = theano.shared(sample_weights(self.dim_h, self.n_label))
-        self.params = [self.W_sdist, self.W_in, self.W_h, self.W_out]
+        self.W_d = theano.shared(sample_weights(dim_d))
+        self.W_i = theano.shared(sample_weights(dim_x, dim_h))
+        self.W_h = theano.shared(sample_weights(dim_h, dim_h))
+        self.W_o = theano.shared(sample_weights(dim_h))
+        self.params = [self.W_d, self.W_i, self.W_h, self.W_o]
 
-        """ Network """
-        x_word_in = self.emb[x_word]  # x_word_in: 1D: n_ants, 2D: window * 2, 3D: dim_x
-        x_sdist_in = self.W_sdist[x_sdist]  # x_sdist_in: 1D: n_ants, 2D: dim_hidden
-        x_word_in_reshape = x_word_in.reshape((x_word_in.shape[0], -1))
+        """ Input Layer """
+        x_s = self.emb[x_span]     # 1D: batch, 2D: limit * 2,      3D: dim_w
+        x_w = self.emb[x_word]     # 1D: batch, 2D: 4,              3D: dim_w
+        x_c = self.emb[x_ctx]      # 1D: batch, 2D: window * 2 * 2, 3D: dim_w
+        x_d = self.W_d[x_dist]     # 1D: batch
+        x = T.concatenate([x_s.reshape((batch, -1)), x_w.reshape((batch, -1)), x_c.reshape((batch, -1)), x_d.reshape((batch, 1))], 1)
 
-#        h1 = tanh(T.dot(T.concatenate([x_word_in_reshape, x_sdist_in_reshape], 1), self.W_in))  # h1: 1D: batch, 2D: dim_h
-        h1 = tanh(T.dot(x_word_in_reshape, self.W_in) + x_sdist_in)  # h1: 1D: n_ants, 2D: dim_h
-        h2 = tanh(T.dot(h1, self.W_h))  # h2: 1D: n_ants, 2D: dim_h
-        self.p_y = sigmoid(T.dot(h2, self.W_out)).flatten()  # p_y: 1D: n_ants
+        """ Intermediate Layers """
+        h1 = tanh(T.dot(x, self.W_i))   # h1: 1D: batch, 2D: dim_h
+        h2 = tanh(T.dot(h1, self.W_h))  # h2: 1D: batch, 2D: dim_h
+
+        """ Output Layer """
+        p_y = sigmoid(T.dot(h2, self.W_o))  # p_y: 1D: batch
 
         """ Predicts """
-        self.y_hat_index = T.argmax(self.p_y, axis=0)
-        self.y_hat_p = self.p_y[self.y_hat_index]
-        self.y_pair_pred = binary_predict(self.p_y)
+        self.y_hat = binary_predict(p_y)
+        self.y_hat_index = T.argmax(p_y)
+        self.p_y_hat = p_y[self.y_hat_index]
 
         """ Cost Function """
-        self.nll = - T.sum(self.y * T.log(self.p_y) + (1. - self.y) * T.log((1. - self.p_y)))
+        self.nll = - T.sum(y * T.log(p_y) + (1. - y) * T.log((1. - p_y)))
         self.cost = self.nll + L2_reg * L2_sqr(params=self.params) / 2
 
         """ Update """
-        self.g = T.grad(self.cost, self.params)
-        self.updates = adam(self.params, self.g)
+        self.grad = T.grad(self.cost, self.params)
+        self.updates = adam(self.params, self.grad)
 
-        """ Check the Accuracy """
-        self.correct = T.eq(self.y_pair_pred, self.y)
+        """ Check Results """
+        self.result = T.eq(self.y_hat, y)
+        self.total_p = T.sum(self.y_hat)
+        self.total_r = T.sum(y)
+        self.correct = T.sum(self.result)
+        self.correct_t, self.correct_f = correct_tf(self.result, y)
 
 
 def binary_predict(p_y):
     return T.switch(p_y >= 0.5, 1, 0)
+
+
+def correct_tf(result, y):
+    correct_t = T.sum(T.switch(result, T.eq(y, 1), 0))
+    correct_f = T.sum(T.switch(result, T.eq(y, 0), 0))
+    return correct_t, correct_f
 

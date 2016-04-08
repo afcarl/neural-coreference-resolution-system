@@ -3,6 +3,7 @@ import re
 from io_utils import UNK
 
 import numpy as np
+import theano
 
 RE_PH = re.compile(ur'[A-Z]+')
 
@@ -594,8 +595,47 @@ def get_cand_mention_features(doc, cand_mentions, gold_mentions, gold_corefs, te
     return x_span, x_word, x_ctx, x_dist, y, posit
 
 
-def convert_into_theano_format(x_span, x_word, x_ctx, x_dist, y):
+def theano_format(samples):
+    """
+    samples = (span, word, ctx, dist, label, position)
+    span: 1D: n_doc, 2D: n_ments, 3D: n_cand_ants, 4D: limit * 2; elem=word id
+    word: 1D: n_doc, 2D: n_ments, 3D: n_cand_ants, 4D: [m_first, m_last, a_first, a_last]; elem=word id
+    ctx: 1D: n_doc, 2D: n_ments, 3D: n_cand_ants, 4D: window * 2 * 2; elem=word id
+    dist: 1D: n_doc, 2D: n_ments, 3D: n_cand_ants; elem=sent dist
+    label: 1D: n_doc, 2D: n_ments; elem=0/1
+    position: 1D: n_doc, 2D: n_ments, 3D: n_cand_ants; elem=(sent_m_i, span_m, sent_a_i, span_a)
+    """
+
+    def shared(_sample):
+        return theano.shared(np.asarray(_sample, dtype='int32'), borrow=True)
+
+    sample_s = []
+    sample_w = []
+    sample_c = []
+    sample_d = []
+    sample_y = []
+
+    indices = []
+
+    for sample_ments in zip(*samples):
+        for sample in zip(*sample_ments):
+            bos = len(sample_y)
+            for s, w, c, d, y, p in zip(*sample):
+                sample_s.append(s)
+                sample_w.append(w)
+                sample_c.append(c)
+                sample_d.append(d)
+                sample_y.append(y)
+            indices.append((bos, len(sample_y)))
+
+    assert len(sample_s) == len(sample_w) == len(sample_c) == len(sample_d) == len(sample_y)
+    return [shared(sample_s), shared(sample_w), shared(sample_c), shared(sample_d), shared(sample_y)], indices
+
+
+"""
+def theano_format(x_span, x_word, x_ctx, x_dist, y):
     def t_format(sample):
         return [[np.asarray(j, dtype='int32') for j in i] for i in sample]
 
     return t_format(x_span), t_format(x_word), t_format(x_ctx), t_format(x_dist), t_format(y)
+"""
