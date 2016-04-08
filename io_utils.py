@@ -49,6 +49,7 @@ class Vocab(object):
 
 def load_conll(path, vocab, vocab_size=None, file_encoding='utf-8'):
     corpus = []
+    doc_names = []
     word_freqs = defaultdict(int)
 
     """ Checking whether word IDs should be registered or not """
@@ -67,6 +68,7 @@ def load_conll(path, vocab, vocab_size=None, file_encoding='utf-8'):
 
             if line.startswith('#begin'):
                 doc = []
+                doc_names.append(" ".join(es))
             elif line.startswith('#end'):
                 corpus.append(doc)
             elif len(es) > 10:
@@ -93,7 +95,9 @@ def load_conll(path, vocab, vocab_size=None, file_encoding='utf-8'):
             else:
                 break
 
-    return corpus, vocab
+    assert len(corpus) == len(doc_names)
+
+    return corpus, doc_names, vocab
 
 
 def load_init_emb(init_emb):

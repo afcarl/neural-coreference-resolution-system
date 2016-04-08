@@ -4,13 +4,15 @@ import time
 import numpy as np
 
 
-def predict(epoch, model, corpus, sample_x, sample_y, posits):
+def predict(epoch, model, corpus, doc_names, sample_x_word, sample_x_sdist, sample_y, posits):
     """
     :param epoch: int
     :param model: model
     :param corpus: 1D: n_doc, 2D: n_sents, 3D: n_words, 4D: (doc_id, part_id, form, tag, syn, ne, coref_id)
-    :param sample_x: 1D: n_doc, 2D: n_mentions, 3D: n_mentions_pairs, 4D: n_phi
-    :param sample_y: 1D: n_doc, 2D: n_mentions, 3D: n_mentions_pairs, 4D: int
+    :param doc_names: 1D: n_doc; str
+    :param sample_x_word: 1D: n_doc, 2D: n_mentions, 3D: n_cand_ants, 4D: window * 2; elem=word id
+    :param sample_x_sdist: 1D: n_doc, 2D: n_mentions, 3D: n_cand_ants; elem=distance
+    :param sample_y: 1D: n_doc, 2D: n_mentions, 3D: n_cand_ants; elem=label (0/1)
     :param posits: 1D: n_doc, 2D: n_mentions, 3D: n_mentions_pairs, 4D: (m_sent_i, m_span, a_sent_i, a_span)
     :return:
     """
@@ -26,36 +28,40 @@ def predict(epoch, model, corpus, sample_x, sample_y, posits):
     correct_t = 0.
     correct_f = 0.
     total = 0.
-    total_t = 0.
+    total_r = 0.
+    total_p = 0.
     k = 0
 
-    for doc_index in xrange(len(sample_x)):
+    for doc_index in xrange(len(sample_x_word)):
         cluster = []
         result = []
 
-        d_sample_x = sample_x[doc_index]
+        d_sample_x_word = sample_x_word[doc_index]
+        d_sample_x_sdist = sample_x_sdist[doc_index]
         d_sample_y = sample_y[doc_index]
         d_posits = posits[doc_index]
 
-        for m_index in xrange(len(d_sample_x)):
+        for m_index in xrange(len(d_sample_x_word)):
             if k % 1000 == 0 and k != 0:
                 print '%d' % k,
                 sys.stdout.flush()
 
-            _sample_x = d_sample_x[m_index]
+            _sample_x_word = d_sample_x_word[m_index]
+            _sample_x_sdist = d_sample_x_sdist[m_index]
             _sample_y = d_sample_y[m_index]
             posit_i = d_posits[m_index]
 
-            c, y_hat, y_p = model(_sample_x, _sample_y)
+            predict_i, correct_i, y_hat, y_p = model(_sample_x_word, _sample_x_sdist, _sample_y)
 
-            correct += np.sum(c)
+            correct += np.sum(correct_i)
             total += len(_sample_y)
-            total_t += np.sum(_sample_y)
+            total_r += np.sum(_sample_y)
+            total_p += np.sum(predict_i)
 
             cluster = add_to_cluster(cluster, y_hat, y_p, posit_i)
             result.append((y_p, posit_i[y_hat]))
 
-            for u in zip(c, _sample_y):
+            for u in zip(correct_i, _sample_y):
                 if u[0] == 1:
                     if u[1] == 1:
                         correct_t += 1
@@ -68,21 +74,27 @@ def predict(epoch, model, corpus, sample_x, sample_y, posits):
 
     end = time.time()
 
-    total_f = total - total_t
+    total_f = total - total_r
     accuracy = correct / total
-    accuracy_t = correct_t / total_t
+    accuracy_t = correct_t / total_r
     accuracy_f = correct_f / total_f
+
+    precision = correct_t / total_p
+    recall = correct_t / total_r
+    f = 2 * precision * recall / (precision + recall)
 
     print '\n\tTime: %f seconds' % (end - start)
     print '\tAcc Total:     %f\tCorrect: %d\tTotal: %d' % (accuracy, correct, total)
-    print '\tAcc Anaph:     %f\tCorrect: %d\tTotal: %d' % (accuracy_t, correct_t, total_t)
+    print '\tAcc Anaph:     %f\tCorrect: %d\tTotal: %d' % (accuracy_t, correct_t, total_r)
     print '\tAcc Non-Anaph: %f\tCorrect: %d\tTotal: %d' % (accuracy_f, correct_f, total_f)
+    print '\tPrecision:     %f\tRecall:  %f\tF1:    %f' % (precision, recall, f)
+    print '\tTotal_P:       %d\tTotal_R: %d' % (total_p, total_r)
 
-    output_results(fn='result-output.epoch-%d.txt' % (epoch+1), corpus=corpus, results=results)
-    output(fn='result.epoch-%d.txt' % (epoch+1), corpus=corpus, clusters=clusters)
+    output_detail_results(fn='result-output.epoch-%d.txt' % (epoch + 1), corpus=corpus, results=results)
+    output_results(fn='result.epoch-%d.txt' % (epoch + 1), corpus=corpus, doc_names=doc_names, clusters=clusters)
 
 
-def output_results(fn, corpus, results):
+def output_detail_results(fn, corpus, results):
     with open(fn, 'w') as f:
         for doc, result in zip(corpus, results):
             mentions = []
@@ -134,7 +146,7 @@ def add_to_cluster(cluster, mention_pair_index, mention_pair_p, posit_i):
     return cluster
 
 
-def output(fn, corpus, clusters):
+def output_results(fn, corpus, doc_names, clusters):
     with open(fn, 'w') as f:
         corefs = []
 
@@ -142,7 +154,6 @@ def output(fn, corpus, clusters):
             d_corefs = []
 
             for sent in doc:
-#                d_corefs.append([['-'] for w_i in xrange(len(sent))])
                 d_corefs.append([[] for w_i in xrange(len(sent))])
             corefs.append(d_corefs)
 
@@ -155,24 +166,10 @@ def output(fn, corpus, clusters):
 
                     for j in xrange(span[0], span[1]+1):
                         d_corefs[sent_i][j].append((span, c_i))
-                        """
-                        coref = None
-                        span_len = span[1] - span[0]
 
-                        if span_len == 0:
-                            coref = (c_i, span)
-#                            coref = '(' + str(c_i) + ')'
-                        elif span_len > 0:
-                            if j == 0:
-                                coref = '(' + str(c_i)
-#                                coref = '(' + str(c_i)
-                            elif j == span_len:
-                                coref = str(c_i) + ')'
-#                                coref = str(c_i) + ')'
-                        if coref:
-                            d_corefs[sent_i][j].append(coref)
-                        """
-        for doc, d_corefs in zip(corpus, corefs):
+        for doc, doc_name, d_corefs in zip(corpus, doc_names, corefs):
+            print >> f, doc_name
+
             for sent, s_corefs in zip(doc, d_corefs):
                 for i, w in enumerate(sent):
                     coref = s_corefs[i]
@@ -183,6 +180,7 @@ def output(fn, corpus, clusters):
                         span = c[0]
                         span_len = span[1] - span[0]
                         c_id = c[1]
+
                         if span_len == 0:
                             if text.startswith('|'):  # |1)
                                 text = '(%d)' % c_id + text
@@ -213,3 +211,4 @@ def output(fn, corpus, clusters):
 
                     print >> f, '%s\t%s\t%d\t%s\t%s' % (w[0].encode('utf-8'), w[1].encode('utf-8'), i, w[2].encode('utf-8'), text)
                 print >> f
+            print >> f, '#end document'

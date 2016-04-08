@@ -1,15 +1,13 @@
 import re
-from copy import deepcopy
 
 from io_utils import UNK
 
 import numpy as np
 
 RE_PH = re.compile(ur'[A-Z]+')
-NON_ANA = '-'
 
 
-def get_gold_mentions(corpus, check=False):
+def get_gold_mentions(corpus, limit=5, check=False):
     """
     :param corpus: 1D: n_doc, 2D: n_sents, 3D: n_words; elem=(doc_id, part_id, word, tag, syn, ne, coref)
     :return: gold_mentions: 1D: n_doc, 2D: n_sents, 3D: n_mentions: elem=(bos, eos)
@@ -18,14 +16,28 @@ def get_gold_mentions(corpus, check=False):
 
     gold_mentions = []
     gold_corefs = []
-    count = 0
+    count = 0.
+    max_span_len = -1
+    total_span_len = 0.
 
     for doc in corpus:
         doc_mention_spans = []
         doc_corefs = []
 
         for sent in doc:
-            mention_spans, coref_ids = get_mention_spans(sent)
+            tmp_mention_spans, coref_ids = get_mention_spans(sent)
+
+            mention_spans = []
+            for span in tmp_mention_spans:
+                span_len = span[1] - span[0] + 1
+
+                if span_len <= limit:
+                    mention_spans.append(span)
+
+                    if span_len > max_span_len:
+                        max_span_len = span_len
+                    total_span_len += span_len
+
             doc_mention_spans.append(mention_spans)
             doc_corefs.append(coref_ids)
             count += len(mention_spans)
@@ -35,7 +47,7 @@ def get_gold_mentions(corpus, check=False):
         gold_corefs.append(doc_corefs)
 
     assert len(gold_mentions) == len(gold_corefs)
-    print 'Gold Mentions: %d' % count
+    print 'Gold Mentions: %d  Max Span Length: %d  Avg. Span Length: %f' % (count, max_span_len, total_span_len / count)
 
     if check:
         with open('gold_mentions.txt', 'w') as f:
@@ -130,13 +142,15 @@ def get_mentions_bio(sent):
     return mentions
 
 
-def get_cand_mentions(corpus, check=False):
+def get_cand_mentions(corpus, limit=5, check=False):
     """
     :param corpus: 1D: n_doc, 2D: n_sents, 3D: n_words; elem=(doc_id, part_id, word, tag, syn, ne, coref_id)
     :return: cand: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=(bos, eos)
     """
     cand_mentions = []
-    count = 0
+    count = 0.
+    max_span_len = -1
+    total_span_len = 0.
 
     for doc in corpus:
         mentions = []
@@ -152,12 +166,24 @@ def get_cand_mentions(corpus, check=False):
             """ Removing duplicates, and sorting """
             mention = list(set(mention))
             mention.sort()
-            mentions.append(mention)
-            count += len(mention)
+
+            new = []
+            for span in mention:
+                span_len = span[1] - span[0] + 1
+
+                if span_len <= limit:
+                    new.append(span)
+
+                    if span_len > max_span_len:
+                        max_span_len = span_len
+                    total_span_len += span_len
+
+            mentions.append(new)
+            count += len(new)
 
         cand_mentions.append(mentions)
 
-    print 'Cand Mentions: %d' % count
+    print 'Cand Mentions: %d  Max Span Length: %d  Avg. Span Length: %f' % (count, max_span_len, total_span_len / count)
 
     if check:
         with open('cand_mentions.txt', 'w') as f:
@@ -192,8 +218,8 @@ def get_np(sent):
             non_term_symbol, bos = tmp_spans.pop()
             spans.append((non_term_symbol, bos, i))
 
-#    return [(bos, eos) for symbol, bos, eos in spans if symbol == 'NP']
-    return get_max_np(spans)
+    return [(bos, eos) for symbol, bos, eos in spans if symbol == 'NP']
+#    return get_max_np(spans)
 
 
 def get_max_np(spans):
@@ -305,15 +331,17 @@ def get_features(id_corpus, cand_mentions, gold_mentions=None, gold_corefs=None,
     :param cand_mentions: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=(bos, eos)
     :param gold_mentions: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=(bos, eos)
     :param gold_corefs: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=coref_id
-    :return: features: 1D: n_doc, 2D: n_mentions, 3D: n_window * 2
+    :return: x_span: 1D: n_doc, 2D: n_mentions, 3D: n_cand_ants, 4D: limit * 2; elem=word id
+    :return: x_word: 1D: n_doc, 2D: n_mentions, 3D: n_cand_ants, 4D: (m_first, m_last, a_first, a_last); elem=word id
+    :return: x_ctx: 1D: n_doc, 2D: n_mentions, 3D: n_cand_ants, 4D: window * 2 * 2; elem=word id
+    :return: x_dist: 1D: n_doc, 2D: n_mentions, 3D: n_cand_ants; elem=sent dist
+    :return: y: 1D: n_doc, 2D: n_mentions; elem=0/1
     """
 
-    #    if gold_mentions:
-    #        test = False
-    #    else:
-    #        test = True
-
-    x = []
+    x_span = []
+    x_word = []
+    x_ctx = []
+    x_dist = []
     y = []
     posit = []
 
@@ -322,39 +350,96 @@ def get_features(id_corpus, cand_mentions, gold_mentions=None, gold_corefs=None,
         # y_i: 1D: n_phi; elem=oracle flag (1=true, 0=false)
 
         if test is False:
-            x_i, y_i, posit_i = get_gold_mention_features(doc=doc, gold_mentions=gold_mentions[i],
-                                                          gold_corefs=gold_corefs[i], window=window)
-            x.append(x_i)
+            x_span_i, x_word_i, x_ctx_i, x_dist_i, y_i, posit_i =\
+                get_gold_mention_features(doc=doc, gold_mentions=gold_mentions[i], gold_corefs=gold_corefs[i], window=window)
+
+            x_span.append(x_span_i)
+            x_word.append(x_word_i)
+            x_ctx.append(x_ctx_i)
+            x_dist.append(x_dist_i)
             y.append(y_i)
             posit.append(posit_i)
 
-        x_i, y_i, posit_i = get_cand_mention_features(doc=doc, cand_mentions=cand_mentions[i],
-                                                      gold_mentions=gold_mentions[i], gold_corefs=gold_corefs[i],
-                                                      test=test, window=window)
-        x.append(x_i)
+        x_span_i, x_word_i, x_ctx_i, x_dist_i, y_i, posit_i =\
+            get_cand_mention_features(doc=doc, cand_mentions=cand_mentions[i], gold_mentions=gold_mentions[i],
+                                      gold_corefs=gold_corefs[i], test=test, window=window)
+
+        x_span.append(x_span_i)
+        x_word.append(x_word_i)
+        x_ctx.append(x_ctx_i)
+        x_dist.append(x_dist_i)
         y.append(y_i)
         posit.append(posit_i)
 
-    return x, y, posit
+    return x_span, x_word, x_ctx, x_dist, y, posit
 
 
-def get_context_word_id(doc, sent_index, head_index, slide, pad):
-    head_index += slide
-    padded_sent = pad + doc[sent_index] + pad
-    return padded_sent[head_index - slide: head_index + slide + 1]
+def get_context_word_id(doc, sent_index, span, window=5):
+    bos = span[0]
+    eos = span[1]
+
+    """ prev context """
+    sent = doc[sent_index][:bos]
+    while len(sent) < window and sent_index > 0:
+        sent_index -= 1
+        sent = doc[sent_index] + sent
+    if len(sent) < window:
+        sent = [0 for i in xrange(window-len(sent))] + sent
+    prev_ctx = sent[-window:]
+
+    """ post context """
+    doc_len = len(doc)
+    sent = doc[sent_index][eos+1:]
+    while len(sent) < window and sent_index < doc_len-1:
+        sent_index += 1
+        sent = sent + doc[sent_index]
+    if len(sent) < window:
+        sent = sent + [0 for i in xrange(window-len(sent))]
+    post_ctx = sent[: window]
+
+    assert len(prev_ctx) == len(post_ctx) == window
+
+    return prev_ctx + post_ctx
+
+
+def get_mention_word_id(doc, sent_index, span, limit=5):
+    bos = span[0]
+    eos = span[1]
+    span_len = eos - bos + 1
+    sent = doc[sent_index]
+    padded_span = sent[bos: eos+1] + [0 for i in xrange(limit - span_len)]
+    first_word = sent[bos]
+    last_word = sent[eos]
+    assert len(padded_span) == limit
+    return padded_span, first_word, last_word
+
+
+def get_dist(sent_m_i, sent_a_i):
+    dist = sent_m_i - sent_a_i
+    assert dist > -1
+    return dist if dist < 10 else 10
 
 
 def get_gold_mention_features(doc, gold_mentions, gold_corefs, window=5):
+    """
+    :param doc: 1D; n_sents, 2D: n_words; elem=word_id
+    :param gold_mentions: 1D: n_sents, 2D: n_mentions; elem=(bos, eos)
+    :param gold_corefs: 1D: n_sents, 2D: n_mentions; elem=coref_id
+    :return: x_word: 1D: n_mentions, 2D: n_window * 2 (ment & ant context)
+    :return: x_dist: 1D: n_mentions; 2D: n_gold_ants; elem=distance
+    :return: y: 1D: n_mentions; 2D: n_gold_ants; elem=label (1)
+    """
+
     def get_antecedents(coref_id, antecedents):
         antecedents.reverse()
         return [ant for ant in antecedents if ant[-1] == coref_id]
 
-    slide = window / 2
-    pad = [0 for k in xrange(slide)]
-
-    x = []
-    y = []
-    posit = []
+    x_span = []  # input: all word ids of spans
+    x_word = []  # input: first and last word ids of spans
+    x_ctx = []  # input: word ids of context surrounding spans
+    x_dist = []  # input: distances between the two sentences containing ment & ant
+    y = []  # output: labels; 1 if the sample is gold else 0
+    positions = []  # ment & ant positions within a document
 
     """ Convert sent level into document level, and remove [] """
     g_mentions = []
@@ -366,67 +451,83 @@ def get_gold_mention_features(doc, gold_mentions, gold_corefs, window=5):
 
     """ Extract features """
     for j, mention in enumerate(g_mentions):
-        x_j = []
-        posit_j = []
+        x_span_j = []
+        x_word_j = []
+        x_ctx_j = []
+        x_dist_j = []
+        position_j = []
 
-        sent_i, span, _ = mention
+        sent_m_i, span_m, _ = mention
 
         """ Extract features of the target mention """
-        mention_context = get_context_word_id(doc=doc, sent_index=sent_i, head_index=span[1], slide=slide, pad=pad)
+        # all_w: 1D: limit, first_w: int, last_m: int
+        m_all_w, m_first_w, m_last_w = get_mention_word_id(doc=doc, sent_index=sent_m_i, span=span_m)
+        m_ctx = get_context_word_id(doc=doc, sent_index=sent_m_i, span=span_m, window=window)  # 1D: window * 2
 
         """ Extract features of the gold antecedents """
         gold_antecedents = get_antecedents(coref_id=mention[-1], antecedents=g_mentions[:j])
         for gold_ant in gold_antecedents:
             sent_a_i, span_a, _ = gold_ant
-            ant_context = get_context_word_id(doc=doc, sent_index=sent_a_i, head_index=span_a[1], slide=slide, pad=pad)
+            a_all_w, a_first_w, a_last_w = get_mention_word_id(doc=doc, sent_index=sent_a_i, span=span_a)
+            a_ctx = get_context_word_id(doc=doc, sent_index=sent_a_i, span=span_a, window=window)
 
-            x_j.append(mention_context + ant_context)
-            posit_j.append((sent_i, span, sent_a_i, span_a))
+            x_span_j.append(m_all_w + a_all_w)
+            x_word_j.append([m_first_w, m_last_w, a_first_w, a_last_w])
+            x_ctx_j.append(m_ctx + a_ctx)
+            x_dist_j.append(get_dist(sent_m_i, sent_a_i))
+            position_j.append((sent_m_i, span_m, sent_a_i, span_a))
 
-        if x_j:
-            x.append(x_j)
-            y.append([1 for i in xrange(len(x_j))])
-            posit.append(posit_j)
+        if x_ctx_j:
+            x_span.append(x_span_j)
+            x_word.append(x_word_j)
+            x_ctx.append(x_ctx_j)
+            x_dist.append(x_dist_j)
+            y.append([1 for i in xrange(len(x_ctx_j))])
+            positions.append(position_j)
 
-    assert len(x) == len(y) == len(posit)
-    return x, y, posit
+    assert len(x_span) == len(x_word) == len(x_ctx) == len(x_dist) == len(y) == len(positions)
+    return x_span, x_word, x_ctx, x_dist, y, positions
 
 
 def get_cand_mention_features(doc, cand_mentions, gold_mentions, gold_corefs, test=False, window=5):
-    slide = window / 2
-    pad = [0 for k in xrange(slide)]
-
-    x = []
+    x_span = []
+    x_word = []
+    x_ctx = []
+    x_dist = []
     y = []
     posit = []
 
     """ Convert sent level into document level, and remove [] """
     c_mentions = []
     for s_i, sent in enumerate(cand_mentions):
-        for span in sent:
-            c_mentions.append((s_i, span[0], span[1]))
+        for span_m in sent:
+            c_mentions.append((s_i, span_m[0], span_m[1]))
     c_mentions.sort()
 
     for j, mention in enumerate(c_mentions):
-        x_j = []
+        x_span_j = []
+        x_word_j = []
+        x_ctx_j = []
+        x_dist_j = []
         y_j = []
         posit_j = []
 
-        sent_i, bos, eos = mention
-        span = (bos, eos)
+        sent_m_i, bos, eos = mention
+        span_m = (bos, eos)
 
-        g_mention_spans = gold_mentions[sent_i]
-        g_coref_ids = gold_corefs[sent_i]
+        g_mention_spans = gold_mentions[sent_m_i]
+        g_coref_ids = gold_corefs[sent_m_i]
 
         m_gold_flag = False
         m_coref_id = -1
 
-        if span in g_mention_spans:
+        if span_m in g_mention_spans:
             m_gold_flag = True
-            m_coref_id = g_coref_ids[g_mention_spans.index(span)]
+            m_coref_id = g_coref_ids[g_mention_spans.index(span_m)]
 
         """ Extract features of the target mention """
-        mention_context = get_context_word_id(doc=doc, sent_index=sent_i, head_index=bos, slide=slide, pad=pad)
+        m_all_w, m_first_w, m_last_w = get_mention_word_id(doc=doc, sent_index=sent_m_i, span=span_m)
+        m_ctx = get_context_word_id(doc=doc, sent_index=sent_m_i, span=span_m, window=window)  # 1D: window * 2
 
         """ Extract the candidate antecedents """
         cand_antecedents = c_mentions[:j]
@@ -438,52 +539,63 @@ def get_cand_mention_features(doc, cand_mentions, gold_mentions, gold_corefs, te
 
         """ Extract features of the candidate antecedents """
         for cand_ant in cand_antecedents:
-            sent_c_i, c_bos, c_eos = cand_ant
-            span_c = (c_bos, c_eos)
+            sent_a_i, a_bos, a_eos = cand_ant
+            span_a = (a_bos, a_eos)
 
             """ Check errors """
-            if sent_c_i < sent_i:
+            if sent_a_i < sent_m_i:
                 pass
-            elif sent_c_i == sent_i and c_bos > bos:
-                print 'Error: sent:%d span(%d,%d), sent:%d span(%d,%d)' % (sent_i, bos, eos, sent_c_i, c_bos, c_eos)
+            elif sent_a_i == sent_m_i and a_bos > bos:
+                print 'Error: sent:%d span(%d,%d), sent:%d span(%d,%d)' % (sent_m_i, bos, eos, sent_a_i, a_bos, a_eos)
                 exit()
-            elif sent_c_i > sent_i:
-                print 'Error: sent:%d span(%d,%d), sent:%d span(%d,%d)' % (sent_i, bos, eos, sent_c_i, c_bos, c_eos)
+            elif sent_a_i > sent_m_i:
+                print 'Error: sent:%d span(%d,%d), sent:%d span(%d,%d)' % (sent_m_i, bos, eos, sent_a_i, a_bos, a_eos)
                 exit()
 
-            ant_context = get_context_word_id(doc=doc, sent_index=sent_c_i, head_index=c_eos, slide=slide, pad=pad)
+            a_all_w, a_first_w, a_last_w = get_mention_word_id(doc=doc, sent_index=sent_a_i, span=span_a)
+            a_ctx = get_context_word_id(doc=doc, sent_index=sent_a_i, span=span_a, window=window)
 
-            g_mention_spans = gold_mentions[sent_c_i]
-            g_coref_ids = gold_corefs[sent_c_i]
+            g_mention_spans = gold_mentions[sent_a_i]
+            g_coref_ids = gold_corefs[sent_a_i]
 
-            c_gold_flag = False
-            c_coref_id = -1
+            a_gold_flag = False
+            a_coref_id = -1
 
             """ Check whether gold span or not """
-            if span_c in g_mention_spans:
-                c_gold_flag = True
-                c_coref_id = g_coref_ids[g_mention_spans.index(span_c)]
+            if span_a in g_mention_spans:
+                a_gold_flag = True
+                a_coref_id = g_coref_ids[g_mention_spans.index(span_a)]
 
-            if m_gold_flag and c_gold_flag and m_coref_id == c_coref_id:
+            if m_gold_flag and a_gold_flag and m_coref_id == a_coref_id:
                 if test:
-                    x_j.append(mention_context + ant_context)
+                    x_span_j.append(m_all_w + a_all_w)
+                    x_word_j.append([m_first_w, m_last_w, a_first_w, a_last_w])
+                    x_ctx_j.append(m_ctx + a_ctx)
+                    x_dist_j.append(get_dist(sent_m_i, sent_a_i))
                     y_j.append(1)
-                    posit_j.append((sent_i, span, sent_c_i, span_c))
+                    posit_j.append((sent_m_i, span_m, sent_a_i, span_a))
             else:
-                x_j.append(mention_context + ant_context)
+                x_span_j.append(m_all_w + a_all_w)
+                x_word_j.append([m_first_w, m_last_w, a_first_w, a_last_w])
+                x_ctx_j.append(m_ctx + a_ctx)
+                x_dist_j.append(get_dist(sent_m_i, sent_a_i))
                 y_j.append(0)
-                posit_j.append((sent_i, span, sent_c_i, span_c))
+                posit_j.append((sent_m_i, span_m, sent_a_i, span_a))
 
-        if x_j:
-            x.append(x_j)
+        if x_ctx_j:
+            x_span.append(x_span_j)
+            x_word.append(x_word_j)
+            x_ctx.append(x_ctx_j)
+            x_dist.append(x_dist_j)
             y.append(y_j)
             posit.append(posit_j)
 
-    assert len(x) == len(y) == len(posit)
-    return x, y, posit
+    assert len(x_span) == len(x_word) == len(x_ctx) == len(x_dist) == len(y) == len(posit)
+    return x_span, x_word, x_ctx, x_dist, y, posit
 
 
-def convert_into_theano_input_format(x, y):
-    sample_x = [[np.asarray(x_j, dtype='int32') for x_j in x_i] for x_i in x]
-    sample_y = [[np.asarray(y_j, dtype='int32') for y_j in y_i] for y_i in y]
-    return sample_x, sample_y
+def convert_into_theano_format(x_span, x_word, x_ctx, x_dist, y):
+    def t_format(sample):
+        return [[np.asarray(j, dtype='int32') for j in i] for i in sample]
+
+    return t_format(x_span), t_format(x_word), t_format(x_ctx), t_format(x_dist), t_format(y)
