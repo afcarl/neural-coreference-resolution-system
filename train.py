@@ -148,7 +148,8 @@ def main(argv):
 
     dev_f = theano.function(
         inputs=[bos, eos],
-        outputs=[model.y_hat, model.correct, model.y_hat_index, model.p_y_hat],
+        outputs=[model.y_hat_index, model.p_y_hat,
+                 model.correct, model.correct_t, model.correct_f, model.total_p, model.total_r],
         givens={
             model.x_span: dev_samples[0][bos: eos],
             model.x_word: dev_samples[1][bos: eos],
@@ -222,7 +223,7 @@ def main(argv):
         print '\tRecall:        %f\tCorrect: %d\tTotal: %d' % (recall, correct_t, total_r)
         print '\tF1:            %f' % f
 
-#        predict(epoch, dev_f, dev_corpus, dev_doc_names)
+        predict(epoch, dev_f, dev_corpus, dev_doc_names, dev_indices, dev_phi[-1])
 
 
 def set_model(argv, vocab_word, init_emb):

@@ -4,18 +4,15 @@ import time
 import numpy as np
 
 
-def predict(epoch, model, corpus, doc_names, sample_x_word, sample_x_sdist, sample_y, posits):
+def predict(epoch, model, corpus, doc_names, indices, posits):
     """
-    :param epoch: int
-    :param model: model
     :param corpus: 1D: n_doc, 2D: n_sents, 3D: n_words, 4D: (doc_id, part_id, form, tag, syn, ne, coref_id)
     :param doc_names: 1D: n_doc; str
-    :param sample_x_word: 1D: n_doc, 2D: n_mentions, 3D: n_cand_ants, 4D: window * 2; elem=word id
-    :param sample_x_sdist: 1D: n_doc, 2D: n_mentions, 3D: n_cand_ants; elem=distance
-    :param sample_y: 1D: n_doc, 2D: n_mentions, 3D: n_cand_ants; elem=label (0/1)
-    :param posits: 1D: n_doc, 2D: n_mentions, 3D: n_mentions_pairs, 4D: (m_sent_i, m_span, a_sent_i, a_span)
-    :return:
+    :param indices: 1D: n_doc, 2D: n_ments; (bos, eos)=ment * all cand ants
+    :param posits: 1D: n_doc, 2D: n_ments, 3D: n_cand_ants, 4D: (m_sent_i, m_span, a_sent_i, a_span)
     """
+
+    assert len(indices) == len(posits)
 
     print '\nTEST'
     print '\tIndex: ',
@@ -32,43 +29,29 @@ def predict(epoch, model, corpus, doc_names, sample_x_word, sample_x_sdist, samp
     total_p = 0.
     k = 0
 
-    for doc_index in xrange(len(sample_x_word)):
+    for d_indices, d_posits in zip(indices, posits):
         cluster = []
         result = []
 
-        d_sample_x_word = sample_x_word[doc_index]
-        d_sample_x_sdist = sample_x_sdist[doc_index]
-        d_sample_y = sample_y[doc_index]
-        d_posits = posits[doc_index]
-
-        for m_index in xrange(len(d_sample_x_word)):
-            if k % 1000 == 0 and k != 0:
+        for index, posit in zip(d_indices, d_posits):
+            if k % 100 == 0 and k != 0:
                 print '%d' % k,
                 sys.stdout.flush()
 
-            _sample_x_word = d_sample_x_word[m_index]
-            _sample_x_sdist = d_sample_x_sdist[m_index]
-            _sample_y = d_sample_y[m_index]
-            posit_i = d_posits[m_index]
+            y_hat, y_p, crr, crr_t, crr_f, ttl_p, ttl_r = model(index[0], index[1])
 
-            predict_i, correct_i, y_hat, y_p = model(_sample_x_word, _sample_x_sdist, _sample_y)
+            correct += crr
+            correct_t += crr_t
+            correct_f += crr_f
+            total += len(posit)
+            total_p += ttl_p
+            total_r += ttl_r
 
-            correct += np.sum(correct_i)
-            total += len(_sample_y)
-            total_r += np.sum(_sample_y)
-            total_p += np.sum(predict_i)
-
-            cluster = add_to_cluster(cluster, y_hat, y_p, posit_i)
-            result.append((y_p, posit_i[y_hat]))
-
-            for u in zip(correct_i, _sample_y):
-                if u[0] == 1:
-                    if u[1] == 1:
-                        correct_t += 1
-                    else:
-                        correct_f += 1
+            cluster = add_to_cluster(cluster, y_hat, y_p, posit)
+            result.append((y_p, posit[y_hat]))
 
             k += 1
+
         clusters.append(cluster)
         results.append(result)
 
@@ -87,8 +70,9 @@ def predict(epoch, model, corpus, doc_names, sample_x_word, sample_x_sdist, samp
     print '\tAcc Total:     %f\tCorrect: %d\tTotal: %d' % (accuracy, correct, total)
     print '\tAcc Anaph:     %f\tCorrect: %d\tTotal: %d' % (accuracy_t, correct_t, total_r)
     print '\tAcc Non-Anaph: %f\tCorrect: %d\tTotal: %d' % (accuracy_f, correct_f, total_f)
-    print '\tPrecision:     %f\tRecall:  %f\tF1:    %f' % (precision, recall, f)
-    print '\tTotal_P:       %d\tTotal_R: %d' % (total_p, total_r)
+    print '\tPrecision:     %f\tCorrect: %d\tTotal: %d' % (precision, correct_t, total_p)
+    print '\tRecall:        %f\tCorrect: %d\tTotal: %d' % (recall, correct_t, total_r)
+    print '\tF1:            %f' % f
 
     output_detail_results(fn='result-output.epoch-%d.txt' % (epoch + 1), corpus=corpus, results=results)
     output_results(fn='result.epoch-%d.txt' % (epoch + 1), corpus=corpus, doc_names=doc_names, clusters=clusters)

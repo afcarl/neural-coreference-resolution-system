@@ -618,6 +618,7 @@ def theano_format(samples):
     indices = []
 
     for sample_ments in zip(*samples):
+        d_indices = []
         for sample in zip(*sample_ments):
             bos = len(sample_y)
             for s, w, c, d, y, p in zip(*sample):
@@ -626,7 +627,8 @@ def theano_format(samples):
                 sample_c.append(c)
                 sample_d.append(d)
                 sample_y.append(y)
-            indices.append((bos, len(sample_y)))
+            d_indices.append((bos, len(sample_y)))
+        indices.append(d_indices)
 
     assert len(sample_s) == len(sample_w) == len(sample_c) == len(sample_d) == len(sample_y)
     return [shared(sample_s), shared(sample_w), shared(sample_c), shared(sample_d), shared(sample_y)], indices
