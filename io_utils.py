@@ -47,7 +47,7 @@ class Vocab(object):
         return vocab
 
 
-def load_conll(path, vocab, vocab_size=None, file_encoding='utf-8'):
+def load_conll(path, vocab, vocab_size=None, data_size=10000, file_encoding='utf-8'):
     corpus = []
     doc_names = []
     word_freqs = defaultdict(int)
@@ -71,6 +71,8 @@ def load_conll(path, vocab, vocab_size=None, file_encoding='utf-8'):
                 doc_names.append(" ".join(es))
             elif line.startswith('#end'):
                 corpus.append(doc)
+                if len(corpus) > data_size:
+                    break
             elif len(es) > 10:
                 doc_id = es[0].decode(file_encoding)
                 part = es[1].decode(file_encoding)
@@ -96,7 +98,6 @@ def load_conll(path, vocab, vocab_size=None, file_encoding='utf-8'):
                 break
 
     assert len(corpus) == len(doc_names)
-
     return corpus, doc_names, vocab
 
 
@@ -139,5 +140,4 @@ def load_init_emb(init_emb):
     emb = np.asarray(emb, dtype=theano.config.floatX)
 
     assert emb.shape[0] == vocab.size()
-
     return emb, vocab

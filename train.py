@@ -4,8 +4,8 @@ import math
 import random
 
 from io_utils import Vocab, load_conll, load_init_emb
-from utils import get_init_emb
-from preprocess import get_gold_mentions, get_cand_mentions, check_coverage_of_cand_mentions, convert_words_into_ids, get_features, theano_format
+from preprocess import get_gold_mentions, get_cand_mentions, check_coverage_of_cand_mentions, convert_words_into_ids, set_cand_ment_coref, theano_format
+from feature_extractors import set_word_id_for_ment, get_features
 from nn import Model
 from test import predict
 
@@ -28,38 +28,29 @@ def main(argv):
     if argv.init_emb:
         print '\n\tInitial Embedding Loading...'
         emb, vocab_word = load_init_emb(init_emb=argv.init_emb)
-        print '\tVocabulary Size: %d' % vocab_word.size()
+        print '\t\tVocabulary Size: %d' % vocab_word.size()
 
     """ Load corpora """
     print '\n\tLoading Corpora...'
+    tr_corpus, tr_doc_names, vocab_word = load_conll(path=argv.train_data, vocab=vocab_word, data_size=argv.data_size)
+    dev_corpus, dev_doc_names, _ = load_conll(path=argv.dev_data, vocab=vocab_word)
+    print '\t\tTrain Documents: %d' % len(tr_corpus)
+    print '\t\tDev   Documents: %d' % len(dev_corpus)
 
-    train_corpus, train_doc_names, vocab_word = load_conll(path=argv.train_data, vocab=vocab_word)
-    if emb is None:
-        emb = get_init_emb(vocab_word, argv.emb)
-    print '\t\tTrain Documents: %d' % len(train_corpus)
-
-    if argv.dev_data:
-        dev_corpus, dev_doc_names, _ = load_conll(path=argv.dev_data, vocab=vocab_word)
-        print '\t\tDev   Documents: %d' % len(dev_corpus)
-
-    if argv.test_data:
-        test_corpus, test_doc_names, _ = load_conll(path=argv.test_data, vocab=vocab_word)
-        print '\t\tTest  Documents: %d' % len(test_corpus)
-
-    """ Extract gold mentions: Train=155,560, Dev=19,156, Test=19,764 """
+    """ Extract gold mentions CoNLL-2012: Train=155,560, Dev=19,156, Test=19,764 """
     # gold_mentions: 1D: n_doc, 2D: n_sents, 3D: n_mentions: elem=(bos, eos)
     # gold_corefs: 1D: n_doc, 2D: n_sents, 3D: n_mentions: elem=coref_id
     print '\n\tExtracting Gold Mentions...'
     print '\t\tTRAIN',
-    tr_gold_ments, tr_gold_corefs = get_gold_mentions(train_corpus, check=argv.check)
+    tr_gold_ments = get_gold_mentions(tr_corpus, check=argv.check)
     print '\t\tDEV  ',
-    dev_gold_ments, dev_gold_corefs = get_gold_mentions(dev_corpus)
+    dev_gold_ments = get_gold_mentions(dev_corpus)
 
     """ Extract cand mentions """
     # cand_mentions: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=(bos, eos)
     print '\n\tExtracting Cand Mentions...'
     print '\t\tTRAIN',
-    tr_cand_ments = get_cand_mentions(train_corpus, check=argv.check)
+    tr_cand_ments = get_cand_mentions(tr_corpus, check=argv.check)
     print '\t\tDEV  ',
     dev_cand_ments = get_cand_mentions(dev_corpus)
 
@@ -72,11 +63,18 @@ def main(argv):
     print '\n\tConverting Words into IDs...'
     print '\t\tVocabulary Size: %d' % vocab_word.size()
 
-    tr_word_ids = convert_words_into_ids(corpus=train_corpus[:10], vocab_word=vocab_word)
-    dev_word_ids = convert_words_into_ids(corpus=dev_corpus[:10], vocab_word=vocab_word)
+    tr_word_ids = convert_words_into_ids(corpus=tr_corpus, vocab_word=vocab_word)
+    dev_word_ids = convert_words_into_ids(corpus=dev_corpus, vocab_word=vocab_word)
 
-    if argv.test_data:
-        test_word_ids = convert_words_into_ids(corpus=test_corpus, vocab_word=vocab_word)
+    """ Set word ids for mentions """
+    tr_gold_ments = set_word_id_for_ment(tr_word_ids, tr_gold_ments)
+    tr_cand_ments = set_word_id_for_ment(tr_word_ids, tr_cand_ments)
+    dev_gold_ments = set_word_id_for_ment(dev_word_ids, dev_gold_ments)
+    dev_cand_ments = set_word_id_for_ment(dev_word_ids, dev_cand_ments)
+
+    """ Set coref ids for cand mentions """
+    tr_cand_ments = set_cand_ment_coref(tr_gold_ments, tr_cand_ments)
+    dev_cand_ments = set_cand_ment_coref(dev_gold_ments, dev_cand_ments)
 
     """ Extract features """
     print '\n\tExtracting features...'
@@ -91,8 +89,8 @@ def main(argv):
     position: 1D: n_doc, 2D: n_ments, 3D: n_cand_ants; elem=(sent_m_i, span_m, sent_a_i, span_a)
     """
 
-    tr_phi  = get_features(tr_word_ids, tr_cand_ments, tr_gold_ments, tr_gold_corefs)
-    dev_phi = get_features(dev_word_ids, dev_cand_ments, dev_gold_ments, dev_gold_corefs, True)
+    tr_phi = get_features(tr_cand_ments, False, argv.n_cands)
+    dev_phi = get_features(dev_cand_ments, True, argv.n_cands)
 
     """ Convert into the Theano format """
     print '\n\tConverting features into the Theano Format...'
@@ -188,7 +186,7 @@ def main(argv):
         total_p = 0.
 
         for i, index in enumerate(indices):
-            if i % 100 == 0 and i != 0:
+            if i % 1000 == 0 and i != 0:
                 print '%d' % i,
                 sys.stdout.flush()
 

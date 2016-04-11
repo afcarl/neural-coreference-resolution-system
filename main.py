@@ -34,6 +34,8 @@ if __name__ == '__main__':
     parser.add_argument('--batch', type=int, default=32, help='batch size')
     parser.add_argument('--epoch', type=int, default=10, help='number of epochs to train')
     parser.add_argument('--no-shuffle', action='store_true', default=False, help='don\'t shuffle training data')
+    parser.add_argument('--n_cands', type=int, default=10, help='number of ant candidates')
+    parser.add_argument('--data_size', type=int, default=10000, help='number of docs')
 
     """ test options """
     parser.add_argument('--model', default=None, help='path to model')

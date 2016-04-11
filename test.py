@@ -34,7 +34,7 @@ def predict(epoch, model, corpus, doc_names, indices, posits):
         result = []
 
         for index, posit in zip(d_indices, d_posits):
-            if k % 100 == 0 and k != 0:
+            if k % 1000 == 0 and k != 0:
                 print '%d' % k,
                 sys.stdout.flush()
 
