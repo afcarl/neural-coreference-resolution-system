@@ -1,3 +1,7 @@
+total_phi = 0
+total_phi_p = 0
+
+
 def set_word_id_for_ment(id_corpus, ments):
     """
     :param id_corpus: 1D: n_doc, 2D: n_sents, 3D: n_words; elem=word id
@@ -29,7 +33,7 @@ def get_mention_word_id(sent, ment, limit=5):
     return span_words, first_word, last_word
 
 
-def get_context_word_id(doc, ment, window=5):
+def get_context_word_id(doc, ment, window=1):
     bos = ment.span[0]
     eos = ment.span[1]
 
@@ -61,45 +65,53 @@ def get_context_word_id(doc, ment, window=5):
 def get_features(cand_mentions, test=False, n_cands=10):
     """
     :param cand_mentions: 1D: n_doc, 2D: n_sents, 3D: n_mentions; elem=Mention
-    :return: x_span: 1D: n_doc, 2D: n_mentions, 3D: n_cand_ants, 4D: limit * 2; elem=word id
-    :return: x_word: 1D: n_doc, 2D: n_mentions, 3D: n_cand_ants, 4D: (m_first, m_last, a_first, a_last); elem=word id
-    :return: x_ctx: 1D: n_doc, 2D: n_mentions, 3D: n_cand_ants, 4D: window * 2 * 2; elem=word id
-    :return: x_dist: 1D: n_doc, 2D: n_mentions, 3D: n_cand_ants; elem=sent dist
-    :return: y: 1D: n_doc, 2D: n_mentions; elem=0/1
+    :return samples: 1D: n_doc, 2D: n_ments, 3D: n_cand_ants; elem=phi
+    :return posits: 1D: n_doc, 2D: n_ments, 3D: n_cand_ants; elem=position
     """
 
-    x_span = []
-    x_word = []
-    x_ctx = []
-    x_dist = []
-    y = []
-    posit = []
-
+    samples = []
+    posits = []
     for doc_ments in cand_mentions:
-        x_span_i, x_word_i, x_ctx_i, x_dist_i, y_i, posit_i = get_mention_phi(doc_ments, test, n_cands)
+        sample, posit = get_mention_phi(doc_ments, test, n_cands)
+        samples.append(sample)
+        posits.append(posit)
 
-        x_span.append(x_span_i)
-        x_word.append(x_word_i)
-        x_ctx.append(x_ctx_i)
-        x_dist.append(x_dist_i)
-        y.append(y_i)
-        posit.append(posit_i)
-
-    return x_span, x_word, x_ctx, x_dist, y, posit
+    return samples, posits
 
 
 def get_dist(sent_m_i, sent_a_i):
     dist = sent_m_i - sent_a_i
     assert dist > -1
-    return dist if dist < 10 else 10
+
+    if dist < 3:
+        return dist
+    elif 3 <= dist < 10:
+        return 3
+    else:
+        return 4
+
+
+def get_ment_dist(ment_i, ant_i):
+    dist = ment_i - ant_i
+    assert dist > 0
+
+    if dist <= 3:
+        return dist + 4
+    elif 3 < dist < 10:
+        return 4 + 4
+    else:
+        return 5 + 4
+
+
+def get_string_match(m_all_words, a_all_words):
+    for m, a in zip(m_all_words, a_all_words):
+        if m != a:
+            return 6
+    return 5
 
 
 def get_mention_phi(cand_mentions, test=False, n_cands=10):
-    x_span = []
-    x_word = []
-    x_ctx = []
-    x_dist = []
-    y = []
+    samples = []
     posit = []
 
     """ Convert sent level into document level, and remove [] """
@@ -109,11 +121,7 @@ def get_mention_phi(cand_mentions, test=False, n_cands=10):
             c_mentions.append(ment)
 
     for j, mention in enumerate(c_mentions):
-        x_span_j = []
-        x_word_j = []
-        x_ctx_j = []
-        x_dist_j = []
-        y_j = []
+        sample_j = []
         posit_j = []
 
         sent_m_i = mention.sent_index
@@ -126,12 +134,13 @@ def get_mention_phi(cand_mentions, test=False, n_cands=10):
         m_first_w = mention.first_word
         m_last_w = mention.last_word
         m_ctx = mention.ctx
+        m_span_len = mention.span_len - 1
 
         """ Extract the candidate antecedents """
         cand_antecedents = c_mentions[:j]
 
         """ Extract features of the candidate antecedents """
-        for cand_ant in cand_antecedents:
+        for k, cand_ant in enumerate(cand_antecedents):
             sent_a_i = cand_ant.sent_index
             span_a = cand_ant.span
             coref_id_a = cand_ant.coref_id
@@ -140,29 +149,25 @@ def get_mention_phi(cand_mentions, test=False, n_cands=10):
             a_first_w = cand_ant.first_word
             a_last_w = cand_ant.last_word
             a_ctx = cand_ant.ctx
+            a_span_len = cand_ant.span_len - 1
 
             """ Check whether gold label or not """
-            label = 1 if coref_id_m == coref_id_a and coref_id_m > -1 else 0
+            label = 1 if coref_id_m == coref_id_a > -1 else 0
 
             """ Add samples """
-            if len(y_j) > n_cands and label == 0 and test is False:
+            if len(sample_j) > n_cands and label == 0 and test is False:
                 continue
 
-            x_span_j.append(m_all_w + a_all_w)
-            x_word_j.append([m_first_w, m_last_w, a_first_w, a_last_w])
-            x_ctx_j.append(m_ctx + a_ctx)
-            x_dist_j.append(get_dist(sent_m_i, sent_a_i))
-            y_j.append(label)
+            sample = (m_all_w + a_all_w, [m_first_w, m_last_w, a_first_w, a_last_w], m_ctx + a_ctx,
+                      [get_dist(sent_m_i, sent_a_i), get_ment_dist(j, k)],
+                      [m_span_len, a_span_len, get_string_match(m_all_w, a_all_w)], label)
+            sample_j.append(sample)
             posit_j.append((sent_m_i, span_m, sent_a_i, span_a))
 
-        if x_span_j:
-            x_span.append(x_span_j)
-            x_word.append(x_word_j)
-            x_ctx.append(x_ctx_j)
-            x_dist.append(x_dist_j)
-            y.append(y_j)
+        if sample_j:
+            samples.append(sample_j)
             posit.append(posit_j)
 
-    assert len(x_span) == len(x_word) == len(x_ctx) == len(x_dist) == len(y) == len(posit)
-    return x_span, x_word, x_ctx, x_dist, y, posit
+    assert len(samples) == len(posit)
+    return samples, posit
 

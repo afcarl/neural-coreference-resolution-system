@@ -11,7 +11,7 @@ def grad_clipping(g, t):
     return T.switch(T.abs_(g) >= t, t / T.abs_(g) * g, g)
 
 
-def sgd(cost, params, emb=None, sub_emb=None, lr=0.1):
+def sgd(cost, params, emb=None, sub_emb=None, lr=0.0075):
     updates = OrderedDict()
 
     """update sub-tensor of embeddings"""
@@ -20,13 +20,27 @@ def sgd(cost, params, emb=None, sub_emb=None, lr=0.1):
         updates[emb] = T.inc_subtensor(sub_emb, -lr * g)
 
     """update parameters"""
-    grads0 = T.grad(cost, params[0])
-    for p, g in zip(params[0], grads0):
+    grads = T.grad(cost, params)
+    for p, g in zip(params, grads):
         updates[p] = p - lr * g
 
+    return updates
+
+
+def sgd_w(cost, params, emb1=None, sub_emb1=None, emb2=None, sub_emb2=None, lr=0.0075):
+    updates = OrderedDict()
+
+    """update sub-tensor of embeddings"""
+    if emb1:
+        g = T.grad(cost, sub_emb1)
+        updates[emb1] = T.inc_subtensor(sub_emb1, -lr * g)
+    if emb2:
+        g = T.grad(cost, sub_emb2)
+        updates[emb2] = T.inc_subtensor(sub_emb2, -lr * g)
+
     """update parameters"""
-    grads1 = T.grad(cost, params[1])
-    for p, g in zip(params[1], grads1):
+    grads = T.grad(cost, params)
+    for p, g in zip(params, grads):
         updates[p] = p - lr * g
 
     return updates

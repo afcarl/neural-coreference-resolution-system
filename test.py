@@ -1,6 +1,8 @@
 import sys
 import time
 
+import train
+
 import numpy as np
 
 
@@ -21,12 +23,12 @@ def predict(epoch, model, corpus, doc_names, indices, posits):
     clusters = []
     results = []
 
-    correct = 0.
-    correct_t = 0.
-    correct_f = 0.
+    correct = np.zeros(9, dtype='float32')
+    correct_t = np.zeros(9, dtype='float32')
+    correct_f = np.zeros(9, dtype='float32')
     total = 0.
-    total_r = 0.
-    total_p = 0.
+    total_r = np.zeros(9, dtype='float32')
+    total_p = np.zeros(9, dtype='float32')
     k = 0
 
     for d_indices, d_posits in zip(indices, posits):
@@ -56,24 +58,8 @@ def predict(epoch, model, corpus, doc_names, indices, posits):
         results.append(result)
 
     end = time.time()
-
-    total_f = total - total_r
-    accuracy = correct / total
-    accuracy_t = correct_t / total_r
-    accuracy_f = correct_f / total_f
-
-    precision = correct_t / total_p
-    recall = correct_t / total_r
-    f = 2 * precision * recall / (precision + recall)
-
     print '\n\tTime: %f seconds' % (end - start)
-    print '\tAcc Total:     %f\tCorrect: %d\tTotal: %d' % (accuracy, correct, total)
-    print '\tAcc Anaph:     %f\tCorrect: %d\tTotal: %d' % (accuracy_t, correct_t, total_r)
-    print '\tAcc Non-Anaph: %f\tCorrect: %d\tTotal: %d' % (accuracy_f, correct_f, total_f)
-    print '\tPrecision:     %f\tCorrect: %d\tTotal: %d' % (precision, correct_t, total_p)
-    print '\tRecall:        %f\tCorrect: %d\tTotal: %d' % (recall, correct_t, total_r)
-    print '\tF1:            %f' % f
-
+    train.show_results(total, total_p, total_r, correct, correct_t, correct_f)
     output_detail_results(fn='result-output.epoch-%d.txt' % (epoch + 1), corpus=corpus, results=results)
     output_results(fn='result.epoch-%d.txt' % (epoch + 1), corpus=corpus, doc_names=doc_names, clusters=clusters)
 
@@ -105,7 +91,7 @@ def output_detail_results(fn, corpus, results):
                 print >> f
 
 
-def add_to_cluster(cluster, mention_pair_index, mention_pair_p, posit_i):
+def add_to_cluster(cluster, mention_pair_index, mention_pair_p, posit_i, threshold=0.5):
     """
     :param cluster: 1D: n_cluster; list, 2D: n_mentions; set
     :param mention_pair_index: int: index
@@ -113,7 +99,7 @@ def add_to_cluster(cluster, mention_pair_index, mention_pair_p, posit_i):
     :param posit_i: 2D: n_pairs, 1D: (m_sent_i, m_span, a_sent_j, a_span)
     """
 
-    if mention_pair_p < 0.5:
+    if mention_pair_p < threshold:
         return cluster
 
     posit = posit_i[mention_pair_index]

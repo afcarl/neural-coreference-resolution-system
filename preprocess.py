@@ -1,5 +1,4 @@
 import re
-import random
 
 from io_utils import UNK
 from mention import Mention
@@ -188,7 +187,7 @@ def get_max_np(spans):
             if t_symbol == symbol == 'NP':
                 if t_bos < bos and eos < t_eos:
                     break
-                elif t_bos == bos and eos < t_eos:
+                if t_bos == bos and eos < t_eos:
                     break
                 elif t_bos < bos and eos == t_eos:
                     break
@@ -232,6 +231,7 @@ def check_coverage_of_cand_mentions(gold, cand):
     assert len(gold) == len(cand)
 
     t_count = 0
+    ana_count = 0
     g_total = 0
     c_total = 0
 
@@ -245,14 +245,34 @@ def check_coverage_of_cand_mentions(gold, cand):
                     if g_ment.span == c_ment.span:
                         t_count += 1
                         break
+            for c_ment in c_sent_ments:
+                flag = False
+
+                if c_ment.coref_id < 0:
+                    continue
+
+                for c_prior_sent_ments in c_doc_ments:
+                    for c_prior_ment in c_prior_sent_ments:
+                        if c_ment.sent_index >= c_prior_ment.sent_index and c_ment.span[0] > c_prior_ment.span[0]:
+                            if c_ment.coref_id == c_prior_ment.coref_id:
+                                ana_count += 1
+                                flag = True
+                                break
+                        else:
+                            if c_prior_ment.sent_index > c_ment:
+                                flag = True
+                            break
+                    if flag:
+                        break
 
             g_total += len(g_sent_ments)
             c_total += len(c_sent_ments)
 
     f_count = c_total - t_count
 
-    print '\t\tCoverage: %f' % (t_count / float(g_total))
-    print '\t\tCandidate True-False Rate: %f:%f' % (t_count / float(c_total), f_count / float(c_total))
+    print '\t\tGold Mention Coverage: %d / %d = %f' % (t_count, g_total, t_count / float(g_total))
+    print '\t\tCandidate Mention True-False Rate: %f:%f' % (t_count / float(c_total), f_count / float(c_total))
+    print '\t\tTotal Anaphoric Mention: %d  Non-Anaphoric Mention: %d\n' % (ana_count, c_total - ana_count)
 
 
 def convert_words_into_ids(corpus, vocab_word):
@@ -312,22 +332,25 @@ def theano_format(samples):
     sample_w = []
     sample_c = []
     sample_d = []
+    sample_l = []
     sample_y = []
 
     indices = []
 
-    for sample_ments in zip(*samples):
+    for doc_samples in samples:
         d_indices = []
-        for sample in zip(*sample_ments):
+        for ment_samples in doc_samples:
             bos = len(sample_y)
-            for s, w, c, d, y, p in zip(*sample):
+            for sample in ment_samples:
+                s, w, c, d, l, y = sample
                 sample_s.append(s)
                 sample_w.append(w)
                 sample_c.append(c)
                 sample_d.append(d)
+                sample_l.append(l)
                 sample_y.append(y)
             d_indices.append((bos, len(sample_y)))
         indices.append(d_indices)
 
-    assert len(sample_s) == len(sample_w) == len(sample_c) == len(sample_d) == len(sample_y)
-    return [shared(sample_s), shared(sample_w), shared(sample_c), shared(sample_d), shared(sample_y)], indices
+    assert len(sample_s) == len(sample_w) == len(sample_c) == len(sample_d) == len(sample_l) == len(sample_y)
+    return [shared(sample_s), shared(sample_w), shared(sample_c), shared(sample_d), shared(sample_l), shared(sample_y)], indices

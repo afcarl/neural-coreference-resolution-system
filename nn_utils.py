@@ -4,7 +4,7 @@ import theano.tensor as T
 
 
 def relu(x):
-    return T.maximum(0, x)
+    return T.nnet.relu(x)
 
 
 def sigmoid(x):
@@ -28,10 +28,14 @@ def build_shared_zeros(shape):
 
 def sample_weights(size_x, size_y=0):
     if size_y == 0:
-        W = np.asarray(np.random.uniform(low=-0.08, high=0.08, size=size_x),
+        W = np.asarray(np.random.uniform(low=-np.sqrt(6.0 / size_x),
+                                         high=np.sqrt(6.0 / size_x),
+                                         size=size_x),
                        dtype=theano.config.floatX)
     else:
-        W = np.asarray(np.random.uniform(low=-0.08, high=0.08, size=(size_x, size_y)),
+        W = np.asarray(np.random.uniform(low=-np.sqrt(6.0 / (size_x + size_y)),
+                                         high=np.sqrt(6.0 / (size_x + size_y)),
+                                         size=(size_x, size_y)),
                        dtype=theano.config.floatX)
     return W
 
